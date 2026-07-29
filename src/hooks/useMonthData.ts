@@ -40,6 +40,7 @@ export function useMonthData(): UseMonthDataResult {
   const months = useExpenseStore((state) => state.months);
   const year = useExpenseStore((state) => state.selectedYear);
   const month = useExpenseStore((state) => state.selectedMonth);
+  const customCategories = useExpenseStore((state) => state.customCategories);
 
   return useMemo<UseMonthDataResult>(() => {
     const monthData = findMonth(months, year, month) ?? createEmptyMonth(year, month);
@@ -48,7 +49,7 @@ export function useMonthData(): UseMonthDataResult {
     const previous = previousPeriod(year, month);
     const previousStats = getMonthStats(findMonth(months, previous.year, previous.month));
 
-    const breakdown = getCategoryBreakdown(monthData.expenses);
+    const breakdown = getCategoryBreakdown(monthData.expenses, customCategories);
     const monthlySeries = getMonthlySeries(months, year);
 
     return {
@@ -67,5 +68,5 @@ export function useMonthData(): UseMonthDataResult {
       availableYears: getAvailableYears(months, currentYear()),
       monthsWithData: monthlySeries.filter((point) => point.hasData).map((point) => point.month),
     };
-  }, [months, year, month]);
+  }, [months, year, month, customCategories]);
 }

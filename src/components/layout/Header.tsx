@@ -22,9 +22,10 @@ import { clearAllUserData } from '../../lib/clearUserData';
 import {
   buildExportFileName,
   downloadWorkbook,
-  exportToWorkbook,
+  exportBackupWorkbook,
 } from '../../lib/excelParser';
 import { useExpenseStore } from '../../store/useExpenseStore';
+import { CategoryManager } from '../categories/CategoryManager';
 import { YearSelector } from '../annual/YearSelector';
 import { BankImportModal } from '../excel/BankImportModal';
 import { ExcelControls } from '../excel/ExcelControls';
@@ -33,6 +34,8 @@ type DeleteStep = null | 1 | 2;
 
 export function Header(): JSX.Element {
   const months = useExpenseStore((state) => state.months);
+  const customCategories = useExpenseStore((state) => state.customCategories);
+  const merchantMemory = useExpenseStore((state) => state.merchantMemory);
 
   const [deleteStep, setDeleteStep] = useState<DeleteStep>(null);
 
@@ -41,21 +44,30 @@ export function Header(): JSX.Element {
   };
 
   const exportAllToExcel = (): void => {
-    if (months.length === 0) {
+    const merchantCount = Object.keys(merchantMemory).length;
+    if (months.length === 0 && customCategories.length === 0 && merchantCount === 0) {
       notifications.show({
         color: 'yellow',
         title: 'אין נתונים לייצוא',
-        message: 'הוסף הכנסות או הוצאות לפני ייצוא לאקסל.',
+        message: 'הוסף הכנסות, הוצאות או הגדרות לפני ייצוא לאקסל.',
       });
       return;
     }
 
     try {
-      downloadWorkbook(exportToWorkbook(months), buildExportFileName());
+      downloadWorkbook(
+        exportBackupWorkbook(months, customCategories, merchantMemory),
+        buildExportFileName()
+      );
+      const parts: string[] = [];
+      if (months.length > 0) {
+        parts.push(`${months.length} גיליונות חודשיים`);
+      }
+      parts.push('קטגוריות מותאמות וזיכרון עסקים');
       notifications.show({
         color: 'emerald',
         title: 'הגיבוי הושלם',
-        message: `נוצר קובץ אקסל עם ${months.length} גיליונות חודשיים.`,
+        message: `נוצר קובץ אקסל עם ${parts.join(' ועם ')}.`,
       });
     } catch {
       notifications.show({
@@ -105,6 +117,7 @@ export function Header(): JSX.Element {
               <Box visibleFrom="xs">
                 <YearSelector size="sm" width={116} />
               </Box>
+              <CategoryManager />
               <BankImportModal mode="card" />
               <BankImportModal mode="bank" />
               <ExcelControls compact />

@@ -1,45 +1,84 @@
-import type { CategoryType, MonthData } from '../types';
+import type { BuiltInCategory, CategoryType, MonthData } from '../types';
 
 export const STORAGE_KEY = 'expense-tracker-v1';
 
-export const CATEGORIES: CategoryType[] = [
-  'דיור',
-  'מזון',
-  'תחבורה',
-  'בריאות',
-  'בילויים',
-  'ביגוד',
-  'חינוך',
-  'חיסכון',
-  'אחר',
+export interface BuiltInCategoryMeta {
+  name: BuiltInCategory;
+  emoji: string;
+  color: string;
+}
+
+export const BUILT_IN_CATEGORIES: BuiltInCategoryMeta[] = [
+  { name: 'דיור', emoji: '🏠', color: '#6366f1' },
+  { name: 'מזון', emoji: '🛒', color: '#10b981' },
+  { name: 'תחבורה', emoji: '🚗', color: '#f59e0b' },
+  { name: 'בריאות', emoji: '💊', color: '#ef4444' },
+  { name: 'בילויים', emoji: '🎬', color: '#8b5cf6' },
+  { name: 'ביגוד', emoji: '👕', color: '#ec4899' },
+  { name: 'חינוך', emoji: '📚', color: '#06b6d4' },
+  { name: 'חיסכון', emoji: '💰', color: '#84cc16' },
+  { name: 'אחר', emoji: '📦', color: '#94a3b8' },
 ];
+
+/** @deprecated Prefer BUILT_IN_CATEGORIES — kept for existing call sites. */
+export const CATEGORIES: CategoryType[] = BUILT_IN_CATEGORIES.map((entry) => entry.name);
 
 /** Category excluded from "real" expenses — money moved to savings is not spending. */
 export const SAVINGS_CATEGORY: CategoryType = 'חיסכון';
 
-export const CATEGORY_COLORS: Record<CategoryType, string> = {
-  'דיור': '#6366f1',
-  'מזון': '#10b981',
-  'תחבורה': '#f59e0b',
-  'בריאות': '#ef4444',
-  'בילויים': '#8b5cf6',
-  'ביגוד': '#ec4899',
-  'חינוך': '#06b6d4',
-  'חיסכון': '#84cc16',
-  'אחר': '#94a3b8',
-};
+export const CATEGORY_COLORS: Record<string, string> = Object.fromEntries(
+  BUILT_IN_CATEGORIES.map((entry) => [entry.name, entry.color])
+);
 
-export const CATEGORY_ICONS: Record<CategoryType, string> = {
-  'דיור': '🏠',
-  'מזון': '🛒',
-  'תחבורה': '🚗',
-  'בריאות': '💊',
-  'בילויים': '🎬',
-  'ביגוד': '👕',
-  'חינוך': '📚',
-  'חיסכון': '💰',
-  'אחר': '📦',
-};
+export const CATEGORY_ICONS: Record<string, string> = Object.fromEntries(
+  BUILT_IN_CATEGORIES.map((entry) => [entry.name, entry.emoji])
+);
+
+export const EMOJI_OPTIONS = [
+  '🏋️',
+  '🐕',
+  '🎮',
+  '✈️',
+  '🏖️',
+  '💻',
+  '🎵',
+  '🍕',
+  '☕',
+  '🎁',
+  '🏥',
+  '⚽',
+  '📱',
+  '🔧',
+  '🌿',
+  '💈',
+  '🎓',
+  '🚀',
+  '🏊',
+  '🍷',
+  '🛒',
+  '🎸',
+  '🐱',
+  '🏠',
+  '💼',
+  '🎨',
+  '🚂',
+  '🌍',
+  '💡',
+  '🎭',
+  '🏰',
+  '🎪',
+] as const;
+
+export const COLOR_OPTIONS = [
+  '#6366f1',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#ec4899',
+  '#06b6d4',
+  '#84cc16',
+] as const;
 
 export const HEBREW_MONTHS = [
   'ינואר',

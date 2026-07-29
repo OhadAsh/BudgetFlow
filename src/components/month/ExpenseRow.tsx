@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActionIcon,
   Badge,
@@ -12,9 +12,15 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
-import type { CategoryType, Expense } from '../../types';
-import { CATEGORIES, CATEGORY_COLORS, CATEGORY_ICONS, COLORS } from '../../lib/constants';
-import { formatCurrency, isCategoryType, isCreditAmount } from '../../lib/utils';
+import type { Expense } from '../../types';
+import { COLORS } from '../../lib/constants';
+import {
+  buildCategorySelectOptions,
+  formatCurrency,
+  isCategoryType,
+  isCreditAmount,
+  resolveCategoryMeta,
+} from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 
 interface ExpenseRowProps {
@@ -25,20 +31,26 @@ interface ExpenseRowProps {
 
 type EditingField = 'category' | 'description' | 'amount' | null;
 
-const CATEGORY_OPTIONS = CATEGORIES.map((category) => ({
-  value: category,
-  label: `${CATEGORY_ICONS[category]} ${category}`,
-}));
-
 export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Element {
   const updateExpense = useExpenseStore((state) => state.updateExpense);
   const removeExpense = useExpenseStore((state) => state.removeExpense);
+  const rememberMerchant = useExpenseStore((state) => state.rememberMerchant);
+  const customCategories = useExpenseStore((state) => state.customCategories);
   const [editing, setEditing] = useState<EditingField>(null);
   const isCredit = isCreditAmount(expense.amount);
 
+  const categoryOptions = useMemo(
+    () => buildCategorySelectOptions(customCategories),
+    [customCategories]
+  );
+  const meta = resolveCategoryMeta(expense.category, customCategories);
+
   const handleCategoryChange = (value: string | null): void => {
     if (value !== null && isCategoryType(value)) {
-      updateExpense(year, month, expense.id, { category: value as CategoryType });
+      updateExpense(year, month, expense.id, { category: value });
+      if (expense.description.trim().length > 0) {
+        rememberMerchant(expense.description, value);
+      }
     }
     setEditing(null);
   };
@@ -53,7 +65,7 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
             searchable
             withCheckIcon={false}
             aria-label="קטגוריה"
-            data={CATEGORY_OPTIONS}
+            data={categoryOptions}
             value={expense.category}
             comboboxProps={{ withinPortal: true }}
             onChange={handleCategoryChange}
@@ -69,14 +81,14 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
               radius="sm"
               styles={{
                 root: {
-                  backgroundColor: `${CATEGORY_COLORS[expense.category]}1A`,
-                  color: CATEGORY_COLORS[expense.category],
+                  backgroundColor: `${meta.color}1A`,
+                  color: meta.color,
                   textTransform: 'none',
                   fontWeight: 600,
                 },
               }}
             >
-              {`${CATEGORY_ICONS[expense.category]} ${expense.category}`}
+              {`${meta.emoji} ${meta.name}`}
             </Badge>
           </UnstyledButton>
         )}
@@ -91,9 +103,9 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
             defaultValue={expense.description}
             onBlur={(event) => {
               const value = event.currentTarget.value.trim();
-              updateExpense(year, month, expense.id, {
-                description: value.length > 0 ? value : 'הוצאה',
-              });
+              const description = value.length > 0 ? value : 'הוצאה';
+              updateExpense(year, month, expense.id, { description });
+              rememberMerchant(description, expense.category);
               setEditing(null);
             }}
             onKeyDown={(event) => {

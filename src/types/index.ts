@@ -1,4 +1,4 @@
-export type CategoryType =
+export type BuiltInCategory =
   | 'דיור'
   | 'מזון'
   | 'תחבורה'
@@ -8,6 +8,21 @@ export type CategoryType =
   | 'חינוך'
   | 'חיסכון'
   | 'אחר';
+
+/** Runtime category — built-in or a user-defined custom name. */
+export type CategoryType = string;
+
+export interface CustomCategory {
+  id: string;
+  name: string;
+  emoji: string;
+  color: string;
+}
+
+/** merchantName (normalized) → categoryName */
+export interface MerchantMemory {
+  [merchantName: string]: string;
+}
 
 export interface Expense {
   id: string;
@@ -93,6 +108,26 @@ export interface ExcelParseResult {
   preview: ImportPreviewRow[];
   skippedSheets: string[];
 }
+
+/** One custom category row from a settings Excel sheet (no id yet). */
+export interface SettingsImportCategory {
+  name: string;
+  emoji: string;
+  color: string;
+}
+
+/** One merchant-memory row from a settings Excel sheet. */
+export interface SettingsImportMerchant {
+  merchant: string;
+  category: string;
+}
+
+export interface SettingsParseResult {
+  categories: SettingsImportCategory[];
+  merchants: SettingsImportMerchant[];
+}
+
+export type SettingsImportMode = 'merge' | 'replace';
 
 /** Statement formats the importer can recognise. */
 export type BankSource = 'cal' | 'max' | 'discount';

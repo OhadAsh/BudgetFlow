@@ -1,13 +1,15 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { Expense, IncomeSource, MonthData } from '../types';
+import type { CustomCategory, Expense, IncomeSource, MerchantMemory, MonthData } from '../types';
 import { STORAGE_KEY, createSeedMonths } from '../lib/constants';
-import { clampMonth, currentMonth, currentYear } from '../lib/utils';
+import { clampMonth, currentMonth, currentYear, normalizeMerchantName } from '../lib/utils';
 
 interface ExpenseState {
   months: MonthData[];
   selectedYear: number;
   selectedMonth: number;
+  customCategories: CustomCategory[];
+  merchantMemory: MerchantMemory;
 
   setSelectedPeriod: (year: number, month: number) => void;
   setSelectedYear: (year: number) => void;
@@ -20,6 +22,19 @@ interface ExpenseState {
   addIncome: (year: number, month: number, source: Omit<IncomeSource, 'id'>) => void;
   updateIncome: (year: number, month: number, id: string, patch: Partial<IncomeSource>) => void;
   removeIncome: (year: number, month: number, id: string) => void;
+
+  addCustomCategory: (cat: Omit<CustomCategory, 'id'>) => void;
+  updateCustomCategory: (id: string, patch: Partial<Omit<CustomCategory, 'id'>>) => void;
+  removeCustomCategory: (id: string) => void;
+
+  rememberMerchant: (merchant: string, category: string) => void;
+  forgetMerchant: (merchant: string) => void;
+
+  /** Replaces custom categories + merchant memory in one shot (settings import). */
+  applyImportedSettings: (
+    customCategories: CustomCategory[],
+    merchantMemory: MerchantMemory
+  ) => void;
 
   importFromExcel: (months: MonthData[]) => void;
   clearAll: () => void;
@@ -85,6 +100,8 @@ export const useExpenseStore = create<ExpenseState>()(
       months: initialMonths,
       selectedYear: initialPeriod.year,
       selectedMonth: initialPeriod.month,
+      customCategories: [],
+      merchantMemory: {},
 
       setSelectedPeriod: (year, month) =>
         set({ selectedYear: year, selectedMonth: clampMonth(month) }),
@@ -145,6 +162,54 @@ export const useExpenseStore = create<ExpenseState>()(
           })),
         })),
 
+      addCustomCategory: (cat) =>
+        set((state) => ({
+          customCategories: [
+            ...state.customCategories,
+            { ...cat, id: crypto.randomUUID(), name: cat.name.trim() },
+          ],
+        })),
+
+      updateCustomCategory: (id, patch) =>
+        set((state) => ({
+          customCategories: state.customCategories.map((entry) =>
+            entry.id === id
+              ? {
+                  ...entry,
+                  ...patch,
+                  id: entry.id,
+                  name: patch.name !== undefined ? patch.name.trim() : entry.name,
+                }
+              : entry
+          ),
+        })),
+
+      removeCustomCategory: (id) =>
+        set((state) => ({
+          customCategories: state.customCategories.filter((entry) => entry.id !== id),
+        })),
+
+      rememberMerchant: (merchant, category) => {
+        const key = normalizeMerchantName(merchant);
+        const trimmedCategory = category.trim();
+        if (key.length === 0 || trimmedCategory.length === 0) return;
+        set((state) => ({
+          merchantMemory: { ...state.merchantMemory, [key]: trimmedCategory },
+        }));
+      },
+
+      forgetMerchant: (merchant) => {
+        const key = normalizeMerchantName(merchant);
+        set((state) => {
+          const next = { ...state.merchantMemory };
+          delete next[key];
+          return { merchantMemory: next };
+        });
+      },
+
+      applyImportedSettings: (customCategories, merchantMemory) =>
+        set({ customCategories, merchantMemory }),
+
       importFromExcel: (imported) =>
         set((state) => {
           const merged = state.months.filter(
@@ -161,16 +226,33 @@ export const useExpenseStore = create<ExpenseState>()(
           months: [],
           selectedYear: currentYear(),
           selectedMonth: currentMonth(),
+          customCategories: [],
+          merchantMemory: {},
         }),
     }),
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      version: 1,
+      version: 2,
+      migrate: (persisted) => {
+        const state = (persisted ?? {}) as Record<string, unknown>;
+        return {
+          ...state,
+          customCategories: Array.isArray(state.customCategories) ? state.customCategories : [],
+          merchantMemory:
+            state.merchantMemory !== null &&
+            typeof state.merchantMemory === 'object' &&
+            !Array.isArray(state.merchantMemory)
+              ? state.merchantMemory
+              : {},
+        };
+      },
       partialize: (state) => ({
         months: state.months,
         selectedYear: state.selectedYear,
         selectedMonth: state.selectedMonth,
+        customCategories: state.customCategories,
+        merchantMemory: state.merchantMemory,
       }),
     }
   )

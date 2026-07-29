@@ -1,5 +1,6 @@
-import type { CategoryType } from '../types';
+import type { CategoryType, CustomCategory, MerchantMemory } from '../types';
 import {
+  BUILT_IN_CATEGORIES,
   CATEGORIES,
   CATEGORY_COLORS,
   CATEGORY_ICONS,
@@ -7,6 +8,68 @@ import {
   SAVINGS_RATE_THRESHOLDS,
   SHORT_MONTHS,
 } from './constants';
+
+export interface CategoryOption {
+  name: string;
+  emoji: string;
+  color: string;
+}
+
+/** Built-in + user-defined categories for Selects and badges. */
+export function getAllCategories(customCategories: CustomCategory[]): CategoryOption[] {
+  const builtIn = BUILT_IN_CATEGORIES.map((entry) => ({
+    name: entry.name,
+    emoji: entry.emoji,
+    color: entry.color,
+  }));
+  const custom = customCategories.map((entry) => ({
+    name: entry.name,
+    emoji: entry.emoji,
+    color: entry.color,
+  }));
+  return [...builtIn, ...custom];
+}
+
+export function resolveCategoryMeta(
+  category: string,
+  customCategories: CustomCategory[] = []
+): CategoryOption {
+  const match = getAllCategories(customCategories).find((entry) => entry.name === category);
+  if (match) return match;
+  return {
+    name: category.length > 0 ? category : 'אחר',
+    emoji: CATEGORY_ICONS['אחר'] ?? '📦',
+    color: CATEGORY_COLORS['אחר'] ?? '#94a3b8',
+  };
+}
+
+/** Normalize merchant keys for merchantMemory lookups. */
+export function normalizeMerchantName(merchant: string): string {
+  return merchant.trim().toLowerCase();
+}
+
+export function lookupMerchant(
+  memory: MerchantMemory,
+  merchantName: string
+): string | undefined {
+  const normalized = normalizeMerchantName(merchantName);
+  if (normalized.length === 0) return undefined;
+  if (memory[normalized]) return memory[normalized];
+
+  const match = Object.keys(memory).find(
+    (key) => normalized.includes(key) || key.includes(normalized)
+  );
+  return match !== undefined ? memory[match] : undefined;
+}
+
+export function buildCategorySelectOptions(
+  customCategories: CustomCategory[]
+): Array<{ value: string; label: string }> {
+  return getAllCategories(customCategories).map((entry) => ({
+    value: entry.name,
+    label: `${entry.emoji} ${entry.name}`,
+  }));
+}
 
 const numberFormatter = new Intl.NumberFormat('he-IL', {
   minimumFractionDigits: 0,
@@ -92,15 +155,35 @@ export function nextPeriod(year: number, month: number): { year: number; month: 
 }
 
 export function isCategoryType(value: unknown): value is CategoryType {
-  return typeof value === 'string' && (CATEGORIES as string[]).includes(value);
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
-export function getCategoryColor(category: CategoryType): string {
-  return CATEGORY_COLORS[category];
+export function getCategoryColor(
+  category: CategoryType,
+  customCategories: CustomCategory[] = []
+): string {
+  return resolveCategoryMeta(category, customCategories).color;
 }
 
-export function getCategoryIcon(category: CategoryType): string {
-  return CATEGORY_ICONS[category];
+export function getCategoryIcon(
+  category: CategoryType,
+  customCategories: CustomCategory[] = []
+): string {
+  return resolveCategoryMeta(category, customCategories).emoji;
+}
+
+/** True when the name collides with a built-in or another custom category. */
+export function isCategoryNameTaken(
+  name: string,
+  customCategories: CustomCategory[],
+  excludeId?: string
+): boolean {
+  const normalized = name.trim();
+  if (normalized.length === 0) return true;
+  if (CATEGORIES.includes(normalized)) return true;
+  return customCategories.some(
+    (entry) => entry.name === normalized && entry.id !== excludeId
+  );
 }
 
 /** Mantine color name for a savings rate, per SAVINGS_RATE_THRESHOLDS. */

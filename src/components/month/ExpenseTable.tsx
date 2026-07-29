@@ -13,9 +13,9 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconLayoutList, IconListDetails, IconPlus, IconSearch } from '@tabler/icons-react';
-import { CATEGORY_COLORS, CATEGORY_ICONS, COLORS, SECTION_TITLE_STYLE } from '../../lib/constants';
+import { COLORS, SECTION_TITLE_STYLE } from '../../lib/constants';
 import { groupExpensesByCategory, sortExpenses } from '../../lib/calculations';
-import { formatCurrency, matchesSearchQuery, todayISO } from '../../lib/utils';
+import { formatCurrency, matchesSearchQuery, resolveCategoryMeta, todayISO } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { useMonthData } from '../../hooks/useMonthData';
 import { ExpenseRow } from './ExpenseRow';
@@ -23,6 +23,7 @@ import { ExpenseRow } from './ExpenseRow';
 export function ExpenseTable(): JSX.Element {
   const { year, month, monthData, stats } = useMonthData();
   const addExpense = useExpenseStore((state) => state.addExpense);
+  const customCategories = useExpenseStore((state) => state.customCategories);
   const [grouped, setGrouped] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -115,20 +116,25 @@ export function ExpenseTable(): JSX.Element {
                       <Fragment key={`group-${group.category}`}>
                         <Table.Tr bg="#F8FAFC">
                           <Table.Td colSpan={2}>
+                            {(() => {
+                              const meta = resolveCategoryMeta(group.category, customCategories);
+                              return (
                             <Badge
                               variant="light"
                               radius="sm"
                               styles={{
                                 root: {
-                                  backgroundColor: `${CATEGORY_COLORS[group.category]}1A`,
-                                  color: CATEGORY_COLORS[group.category],
+                                  backgroundColor: `${meta.color}1A`,
+                                  color: meta.color,
                                   textTransform: 'none',
                                   fontWeight: 700,
                                 },
                               }}
                             >
-                              {`${CATEGORY_ICONS[group.category]} ${group.category} · ${group.expenses.length}`}
+                              {`${meta.emoji} ${group.category} · ${group.expenses.length}`}
                             </Badge>
+                              );
+                            })()}
                           </Table.Td>
                           <Table.Td>
                             <Text

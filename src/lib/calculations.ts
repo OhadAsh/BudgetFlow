@@ -2,19 +2,15 @@ import type {
   AnnualStats,
   CategoryBreakdownItem,
   CategoryType,
+  CustomCategory,
   Expense,
   IncomeSource,
   MonthData,
   MonthStats,
   MonthlySeriesPoint,
 } from '../types';
-import {
-  CATEGORIES,
-  CATEGORY_COLORS,
-  CATEGORY_ICONS,
-  SAVINGS_CATEGORY,
-} from './constants';
-import { clampMonth, getShortMonthName } from './utils';
+import { CATEGORIES, SAVINGS_CATEGORY } from './constants';
+import { clampMonth, getShortMonthName, resolveCategoryMeta } from './utils';
 
 export function emptyCategoryRecord(): Record<CategoryType, number> {
   return CATEGORIES.reduce<Record<CategoryType, number>>((acc, category) => {
@@ -48,7 +44,8 @@ export function sumSavingsCategory(expenses: Expense[]): number {
 export function groupByCategory(expenses: Expense[]): Record<CategoryType, number> {
   const totals = emptyCategoryRecord();
   expenses.forEach((expense) => {
-    totals[expense.category] += safeNumber(expense.amount);
+    const key = expense.category.trim().length > 0 ? expense.category : 'אחר';
+    totals[key] = (totals[key] ?? 0) + safeNumber(expense.amount);
   });
   return totals;
 }
@@ -95,26 +92,32 @@ export function getMonthStats(month: MonthData | undefined): MonthStats {
     savingsRate: calcSavingsRate(netSaved, totalIncome),
     byCategory,
     expenseCount: expenses.length,
-    activeCategoryCount: CATEGORIES.filter((category) => byCategory[category] > 0).length,
+    activeCategoryCount: Object.keys(byCategory).filter((category) => byCategory[category] > 0)
+      .length,
     hasData: income.length > 0 || expenses.length > 0,
   };
 }
 
 /** Category breakdown for the pie chart — spending categories only, largest first. */
-export function getCategoryBreakdown(expenses: Expense[]): CategoryBreakdownItem[] {
+export function getCategoryBreakdown(
+  expenses: Expense[],
+  customCategories: CustomCategory[] = []
+): CategoryBreakdownItem[] {
   const totals = groupByCategory(expenses);
   const spendingTotal = sumExpenses(expenses);
 
-  return CATEGORIES.filter(
-    (category) => category !== SAVINGS_CATEGORY && totals[category] > 0
-  )
-    .map((category) => ({
-      category,
-      amount: totals[category],
-      percentage: spendingTotal > 0 ? (totals[category] / spendingTotal) * 100 : 0,
-      color: CATEGORY_COLORS[category],
-      icon: CATEGORY_ICONS[category],
-    }))
+  return Object.keys(totals)
+    .filter((category) => category !== SAVINGS_CATEGORY && totals[category] > 0)
+    .map((category) => {
+      const meta = resolveCategoryMeta(category, customCategories);
+      return {
+        category,
+        amount: totals[category],
+        percentage: spendingTotal > 0 ? (totals[category] / spendingTotal) * 100 : 0,
+        color: meta.color,
+        icon: meta.emoji,
+      };
+    })
     .sort((a, b) => b.amount - a.amount);
 }
 
@@ -147,16 +150,19 @@ export function getAnnualStats(months: MonthData[], year: number): AnnualStats {
     .filter((month) => month.year === year)
     .forEach((month) => {
       month.expenses.forEach((expense) => {
-        byCategory[expense.category] += safeNumber(expense.amount);
+        const key = expense.category.trim().length > 0 ? expense.category : 'אחר';
+        byCategory[key] = (byCategory[key] ?? 0) + safeNumber(expense.amount);
       });
     });
 
   const best = monthsWithData.reduce<{ month: number; saved: number } | null>(
-    (acc, point) => (acc === null || point.saved > acc.saved ? { month: point.month, saved: point.saved } : acc),
+    (acc, point) =>
+      acc === null || point.saved > acc.saved ? { month: point.month, saved: point.saved } : acc,
     null
   );
   const worst = monthsWithData.reduce<{ month: number; saved: number } | null>(
-    (acc, point) => (acc === null || point.saved < acc.saved ? { month: point.month, saved: point.saved } : acc),
+    (acc, point) =>
+      acc === null || point.saved < acc.saved ? { month: point.month, saved: point.saved } : acc,
     null
   );
 

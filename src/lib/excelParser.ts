@@ -6,13 +6,18 @@ import type {
   BankIncomeTransaction,
   BankTransaction,
   CategoryType,
+  CustomCategory,
   ExcelParseResult,
   Expense,
   ImportPreviewRow,
   IncomeSource,
+  MerchantMemory,
   MonthData,
+  SettingsImportCategory,
+  SettingsImportMerchant,
+  SettingsParseResult,
 } from '../types';
-import { EXCEL_HEADERS, HEBREW_MONTHS } from './constants';
+import { COLOR_OPTIONS, EMOJI_OPTIONS, EXCEL_HEADERS, HEBREW_MONTHS } from './constants';
 import {
   formatMonthYear,
   isCategoryType,
@@ -25,6 +30,21 @@ type Cell = string | number | boolean | null | undefined;
 type SheetRow = Cell[];
 
 const SHEET_NAME_LIMIT = 31;
+
+export const SETTINGS_SHEET_NAMES = {
+  categories: 'קטגוריות מותאמות',
+  merchants: 'זיכרון עסקים',
+} as const;
+
+export const SETTINGS_HEADERS = {
+  name: 'שם',
+  emoji: "אימוג'י",
+  color: 'צבע',
+  merchant: 'שם עסק',
+  category: 'קטגוריה',
+} as const;
+
+export const SETTINGS_EXPORT_FILE_NAME = 'הגדרות-מעקב-הוצאות.xlsx';
 
 /**
  * Builds a workbook with one sheet per month, each holding an income section
@@ -72,6 +92,148 @@ export function exportToWorkbook(months: MonthData[]): XLSX.WorkBook {
   return workbook;
 }
 
+/** Appends custom-category and merchant-memory sheets to an existing workbook. */
+export function appendSettingsSheets(
+  workbook: XLSX.WorkBook,
+  customCategories: CustomCategory[],
+  merchantMemory: MerchantMemory
+): void {
+  const categoriesSheet = XLSX.utils.aoa_to_sheet(buildCategoriesSheetRows(customCategories));
+  categoriesSheet['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 12 }];
+  XLSX.utils.book_append_sheet(workbook, categoriesSheet, SETTINGS_SHEET_NAMES.categories);
+
+  const merchantsSheet = XLSX.utils.aoa_to_sheet(buildMerchantsSheetRows(merchantMemory));
+  merchantsSheet['!cols'] = [{ wch: 28 }, { wch: 16 }];
+  XLSX.utils.book_append_sheet(workbook, merchantsSheet, SETTINGS_SHEET_NAMES.merchants);
+}
+
+/**
+ * Full backup before nuclear delete: monthly financial sheets plus settings sheets.
+ * When there is no month data, still writes the two settings sheets alone.
+ */
+export function exportBackupWorkbook(
+  months: MonthData[],
+  customCategories: CustomCategory[],
+  merchantMemory: MerchantMemory
+): XLSX.WorkBook {
+  const workbook =
+    months.length > 0 ? exportToWorkbook(months) : XLSX.utils.book_new();
+  appendSettingsSheets(workbook, customCategories, merchantMemory);
+  return workbook;
+}
+
+/** Settings-only workbook (categories + merchant memory) for device transfer. */
+export function exportSettingsToWorkbook(
+  customCategories: CustomCategory[],
+  merchantMemory: MerchantMemory
+): XLSX.WorkBook {
+  const workbook = XLSX.utils.book_new();
+  appendSettingsSheets(workbook, customCategories, merchantMemory);
+  return workbook;
+}
+
+function buildCategoriesSheetRows(customCategories: CustomCategory[]): SheetRow[] {
+  const rows: SheetRow[] = [[SETTINGS_HEADERS.name, SETTINGS_HEADERS.emoji, SETTINGS_HEADERS.color]];
+  customCategories.forEach((entry) => {
+    rows.push([entry.name, entry.emoji, entry.color]);
+  });
+  return rows;
+}
+
+function buildMerchantsSheetRows(merchantMemory: MerchantMemory): SheetRow[] {
+  const rows: SheetRow[] = [[SETTINGS_HEADERS.merchant, SETTINGS_HEADERS.category]];
+  Object.entries(merchantMemory)
+    .sort(([a], [b]) => a.localeCompare(b, 'he'))
+    .forEach(([merchant, category]) => {
+      rows.push([merchant, category]);
+    });
+  return rows;
+}
+
+/** Reads a settings Excel file (custom categories + merchant memory sheets). */
+export async function parseSettingsFile(file: File): Promise<SettingsParseResult> {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+
+  const categories: SettingsImportCategory[] = [];
+  const merchants: SettingsImportMerchant[] = [];
+
+  workbook.SheetNames.forEach((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) return;
+
+    const rows = XLSX.utils.sheet_to_json<SheetRow>(sheet, {
+      header: 1,
+      blankrows: false,
+      defval: '',
+    });
+
+    const normalizedName = normalizeSpaces(sheetName);
+    if (normalizedName === SETTINGS_SHEET_NAMES.categories) {
+      categories.push(...parseCategoriesSheetRows(rows));
+      return;
+    }
+    if (normalizedName === SETTINGS_SHEET_NAMES.merchants) {
+      merchants.push(...parseMerchantsSheetRows(rows));
+    }
+  });
+
+  if (categories.length === 0 && merchants.length === 0) {
+    throw new Error(
+      `לא נמצאו גיליונות הגדרות בקובץ. ודא שיש גיליון "${SETTINGS_SHEET_NAMES.categories}" או "${SETTINGS_SHEET_NAMES.merchants}".`
+    );
+  }
+
+  return { categories, merchants };
+}
+
+function parseCategoriesSheetRows(rows: SheetRow[]): SettingsImportCategory[] {
+  const result: SettingsImportCategory[] = [];
+  const defaultEmoji = EMOJI_OPTIONS[0];
+  const defaultColor = COLOR_OPTIONS[0];
+
+  rows.forEach((row, index) => {
+    const name = toSafeString(row[0]).trim();
+    const emoji = toSafeString(row[1]).trim();
+    const color = toSafeString(row[2]).trim();
+
+    if (index === 0 && name === SETTINGS_HEADERS.name) {
+      return;
+    }
+    if (name.length === 0) {
+      return;
+    }
+
+    result.push({
+      name,
+      emoji: emoji.length > 0 ? emoji : defaultEmoji,
+      color: color.length > 0 ? color : defaultColor,
+    });
+  });
+
+  return result;
+}
+
+function parseMerchantsSheetRows(rows: SheetRow[]): SettingsImportMerchant[] {
+  const result: SettingsImportMerchant[] = [];
+
+  rows.forEach((row, index) => {
+    const merchant = toSafeString(row[0]).trim();
+    const category = toSafeString(row[1]).trim();
+
+    if (index === 0 && merchant === SETTINGS_HEADERS.merchant) {
+      return;
+    }
+    if (merchant.length === 0 || category.length === 0) {
+      return;
+    }
+
+    result.push({ merchant, category });
+  });
+
+  return result;
+}
+
 export function downloadWorkbook(workbook: XLSX.WorkBook, fileName: string): void {
   XLSX.writeFile(workbook, fileName);
 }
@@ -117,6 +279,14 @@ export async function parseExcelFile(
   const skippedSheets: string[] = [];
 
   workbook.SheetNames.forEach((sheetName) => {
+    const normalizedName = normalizeSpaces(sheetName);
+    if (
+      normalizedName === SETTINGS_SHEET_NAMES.categories ||
+      normalizedName === SETTINGS_SHEET_NAMES.merchants
+    ) {
+      return;
+    }
+
     const period = parseSheetName(sheetName);
     const sheet = workbook.Sheets[sheetName];
     if (!period || !sheet) {

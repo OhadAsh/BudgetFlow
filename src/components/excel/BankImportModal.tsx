@@ -25,9 +25,10 @@ import type {
   BankImportResult,
   BankIncomeImportResult,
   BankSource,
+  BankTransaction,
   CategoryType,
 } from '../../types';
-import { CATEGORIES, CATEGORY_ICONS, COLORS } from '../../lib/constants';
+import { COLORS } from '../../lib/constants';
 import {
   UNKNOWN_FORMAT_ERROR,
   collectImportedHashes,
@@ -37,14 +38,17 @@ import {
   parseCardFile,
   periodFromIsoDate,
 } from '../../lib/excelParser';
-import { formatCurrency, formatMonthYear, isCategoryType, isCreditAmount, matchesSearchQuery } from '../../lib/utils';
+import {
+  buildCategorySelectOptions,
+  formatCurrency,
+  formatMonthYear,
+  isCategoryType,
+  isCreditAmount,
+  lookupMerchant,
+  matchesSearchQuery,
+} from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { ExcelFileDropArea } from './ExcelFileDropArea';
-
-const CATEGORY_OPTIONS = CATEGORIES.map((category) => ({
-  value: category,
-  label: `${CATEGORY_ICONS[category]} ${category}`,
-}));
 
 const SOURCE_BADGES: Record<BankSource, { label: string; color: string }> = {
   cal: { label: 'זוהה: כאל ✓', color: 'emerald' },
@@ -106,6 +110,9 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   const addIncome = useExpenseStore((state) => state.addIncome);
   const selectedYear = useExpenseStore((state) => state.selectedYear);
   const selectedMonth = useExpenseStore((state) => state.selectedMonth);
+  const customCategories = useExpenseStore((state) => state.customCategories);
+  const merchantMemory = useExpenseStore((state) => state.merchantMemory);
+  const rememberMerchant = useExpenseStore((state) => state.rememberMerchant);
 
   const [opened, setOpened] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
@@ -118,6 +125,17 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   const [uncheckedExpense, setUncheckedExpense] = useState<Record<string, boolean>>({});
   const [targetPeriod, setTargetPeriod] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [memoryAppliedIds, setMemoryAppliedIds] = useState<Set<string>>(new Set());
+  const [memoryPrompt, setMemoryPrompt] = useState<{
+    id: string;
+    merchant: string;
+    category: string;
+  } | null>(null);
+
+  const categoryOptions = useMemo(
+    () => buildCategorySelectOptions(customCategories),
+    [customCategories]
+  );
 
   const existingHashes = useMemo(() => collectImportedHashes(months), [months]);
 
@@ -222,6 +240,8 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     setUncheckedExpense({});
     setTargetPeriod('');
     setSearchQuery('');
+    setMemoryAppliedIds(new Set());
+    setMemoryPrompt(null);
   };
 
   const applyPeriod = (period: { year: number; month: number }): void => {
@@ -293,13 +313,22 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
         }
 
         const merged = mergeCardImportResults(parsedFiles);
-        setCardResult(merged);
+        const memoryIds = new Set<string>();
+        const transactions: BankTransaction[] = merged.transactions.map((transaction) => {
+          const remembered = lookupMerchant(merchantMemory, transaction.merchant);
+          if (remembered !== undefined) {
+            memoryIds.add(transaction.id);
+            return { ...transaction, category: remembered };
+          }
+          return transaction;
+        });
+        setCardResult({ ...merged, transactions });
+        setMemoryAppliedIds(memoryIds);
+        setMemoryPrompt(null);
         setCategoryOverrides({});
         setSkipped({});
-        // Prefer actual transaction dates for the fallback month — chargePeriod is the
-        // statement billing month and must not drain all rows into one bucket.
         applyPeriod(
-          mostCommonPeriod(merged.transactions) ??
+          mostCommonPeriod(transactions) ??
             merged.chargePeriod ?? { year: selectedYear, month: selectedMonth }
         );
       }
@@ -637,6 +666,12 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                                     זיכוי
                                   </Badge>
                                 )}
+                                {memoryAppliedIds.has(transaction.id) &&
+                                  categoryOverrides[transaction.id] === undefined && (
+                                  <Badge size="xs" color="violet" variant="light" radius="sm">
+                                    🧠 זיכרון
+                                  </Badge>
+                                )}
                                 {transaction.isPending && (
                                   <Badge size="xs" color="gray" variant="light" radius="sm">
                                     בקליטה
@@ -679,24 +714,70 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                           </Table.Td>
 
                           <Table.Td>
-                            <Select
-                              size="xs"
-                              aria-label="קטגוריה"
-                              data={CATEGORY_OPTIONS}
-                              value={category}
-                              disabled={transaction.isPending}
-                              allowDeselect={false}
-                              withCheckIcon={false}
-                              comboboxProps={{ withinPortal: true }}
-                              onChange={(value) => {
-                                if (value !== null && isCategoryType(value)) {
-                                  setCategoryOverrides((current) => ({
-                                    ...current,
-                                    [transaction.id]: value,
-                                  }));
-                                }
-                              }}
-                            />
+                            <Stack gap={4}>
+                              <Select
+                                size="xs"
+                                aria-label="קטגוריה"
+                                data={categoryOptions}
+                                value={category}
+                                disabled={transaction.isPending}
+                                allowDeselect={false}
+                                withCheckIcon={false}
+                                comboboxProps={{ withinPortal: true }}
+                                onChange={(value) => {
+                                  if (value !== null && isCategoryType(value)) {
+                                    setCategoryOverrides((current) => ({
+                                      ...current,
+                                      [transaction.id]: value,
+                                    }));
+                                    setMemoryAppliedIds((current) => {
+                                      const next = new Set(current);
+                                      next.delete(transaction.id);
+                                      return next;
+                                    });
+                                    if (value !== transaction.category) {
+                                      setMemoryPrompt({
+                                        id: transaction.id,
+                                        merchant: transaction.merchant,
+                                        category: value,
+                                      });
+                                    } else {
+                                      setMemoryPrompt((current) =>
+                                        current?.id === transaction.id ? null : current
+                                      );
+                                    }
+                                  }
+                                }}
+                              />
+                              {memoryPrompt?.id === transaction.id && (
+                                <Group gap={6} wrap="wrap">
+                                  <Text fz="xs" c={COLORS.textSecondary}>
+                                    {`לזכור ש${memoryPrompt.merchant} = ${memoryPrompt.category} לפעמים הבאות?`}
+                                  </Text>
+                                  <Button
+                                    size="compact-xs"
+                                    radius="xl"
+                                    color="violet"
+                                    variant="light"
+                                    onClick={() => {
+                                      rememberMerchant(memoryPrompt.merchant, memoryPrompt.category);
+                                      setMemoryAppliedIds((current) => new Set(current).add(transaction.id));
+                                      setMemoryPrompt(null);
+                                    }}
+                                  >
+                                    כן
+                                  </Button>
+                                  <Button
+                                    size="compact-xs"
+                                    radius="xl"
+                                    variant="default"
+                                    onClick={() => setMemoryPrompt(null)}
+                                  >
+                                    לא
+                                  </Button>
+                                </Group>
+                              )}
+                            </Stack>
                           </Table.Td>
 
                           <Table.Td>
@@ -958,7 +1039,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                                     size="xs"
                                     radius="xl"
                                     aria-label="קטגוריה"
-                                    data={CATEGORY_OPTIONS}
+                                    data={categoryOptions}
                                     value={selectedCategory}
                                     allowDeselect={false}
                                     disabled={isDuplicate}
