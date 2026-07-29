@@ -1,4 +1,4 @@
-import { Card, Group, Progress, RingProgress, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Card, Group, Progress, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconTrendingDown, IconTrendingUp } from '@tabler/icons-react';
 import { BIG_NUMBER_STYLE, COLORS, SECTION_TITLE_STYLE } from '../../lib/constants';
 import {
@@ -9,6 +9,7 @@ import {
   getSavingsRateLabel,
 } from '../../lib/utils';
 import { useMonthData } from '../../hooks/useMonthData';
+import { SavingsRing } from './SavingsRing';
 
 export function MonthlySummary(): JSX.Element {
   const { stats, incomeDelta, expensesDelta, previousStats } = useMonthData();
@@ -81,46 +82,38 @@ export function MonthlySummary(): JSX.Element {
         </Stack>
       </Card>
 
-      <Card h="100%" style={{ overflow: 'hidden' }}>
-        <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm" h="100%">
-          <Stack gap={6} style={{ flex: 1, minWidth: 0 }} justify="space-between">
-            <Text style={SECTION_TITLE_STYLE} fz="0.8125rem">
-              ✨ נחסך
-            </Text>
-            <Text style={BIG_NUMBER_STYLE} c={savingsColor}>
-              {formatCurrency(stats.netSaved)}
-            </Text>
-            <Text fz="xs" c={COLORS.textSecondary} lineClamp={2}>
-              {`${formatPercent(stats.savingsRate)} מההכנסה · ${getSavingsRateLabel(stats.savingsRate)}`}
-            </Text>
-            <Progress
-              value={ringValue}
-              color={rateColor}
-              size="sm"
-              radius="xl"
-              aria-label="שיעור חיסכון"
-            />
-          </Stack>
-          <RingProgress
-            size={64}
-            thickness={7}
-            roundCaps
-            style={{ flexShrink: 0 }}
-            aria-label="טבעת שיעור חיסכון"
-            sections={[{ value: ringValue, color: rateColor }]}
-            label={
+      <Card h="100%">
+        <Stack gap="sm" h="100%" justify="space-between" style={{ minWidth: 0 }}>
+          <Text style={SECTION_TITLE_STYLE} fz="0.8125rem">
+            ✨ נחסך
+          </Text>
+
+          <Group wrap="nowrap" align="center" gap="md" style={{ minWidth: 0 }}>
+            <SavingsRing value={stats.savingsRate} color={rateColor} labelColor={savingsColor} />
+            <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
               <Text
-                ta="center"
-                fw={700}
-                fz="xs"
                 c={savingsColor}
-                style={{ direction: 'ltr', unicodeBidi: 'isolate', whiteSpace: 'nowrap' }}
+                style={{
+                  ...BIG_NUMBER_STYLE,
+                  fontSize: 'clamp(1.1rem, 2vw, 1.75rem)',
+                }}
               >
-                {formatPercent(stats.savingsRate)}
+                {formatCurrency(stats.netSaved)}
               </Text>
-            }
+              <Text fz="xs" c={COLORS.textSecondary} lineClamp={2}>
+                {`${formatPercent(stats.savingsRate)} מההכנסה · ${getSavingsRateLabel(stats.savingsRate)}`}
+              </Text>
+            </Stack>
+          </Group>
+
+          <Progress
+            value={ringValue}
+            color={rateColor}
+            size="sm"
+            radius="xl"
+            aria-label="שיעור חיסכון"
           />
-        </Group>
+        </Stack>
       </Card>
     </SimpleGrid>
   );
