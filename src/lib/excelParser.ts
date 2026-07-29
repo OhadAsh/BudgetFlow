@@ -632,16 +632,16 @@ export function categoryFromMerchant(merchant: string): CategoryType | null {
   if (normalized.trim().length === 0) return null;
 
   let best: { category: CategoryType; length: number } | null = null;
-  MERCHANT_KEYWORDS.forEach((entry) => {
-    entry.keywords.forEach((keyword) => {
+  for (const entry of MERCHANT_KEYWORDS) {
+    for (const keyword of entry.keywords) {
       const needle = keyword.toLowerCase();
       if (normalized.includes(needle) && (best === null || needle.trim().length > best.length)) {
         best = { category: entry.category, length: needle.trim().length };
       }
-    });
-  });
+    }
+  }
 
-  return best === null ? null : (best as { category: CategoryType }).category;
+  return best?.category ?? null;
 }
 
 /** ענף first, merchant keywords second, אחר last. */
@@ -1181,13 +1181,13 @@ export function mapBankExpenseCategory(description: string): CategoryType {
   }
 
   let best: { category: CategoryType; length: number } | null = null;
-  MERCHANT_KEYWORDS.forEach((entry) => {
-    entry.keywords.forEach((keyword) => {
+  for (const entry of MERCHANT_KEYWORDS) {
+    for (const keyword of entry.keywords) {
       if (lower.includes(keyword.toLowerCase()) && keyword.length >= (best?.length ?? 0)) {
         best = { category: entry.category, length: keyword.length };
       }
-    });
-  });
+    }
+  }
   return best?.category ?? 'אחר';
 }
 
