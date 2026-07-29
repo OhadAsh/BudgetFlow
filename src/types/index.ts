@@ -146,10 +146,24 @@ export interface BankIncomeTransaction {
   needsReview: boolean;
 }
 
+/** A single debit (חובה) row — standing orders, rent, utilities, etc. */
+export interface BankExpenseTransaction {
+  id: string;
+  /** ISO date (YYYY-MM-DD), empty when the source date could not be read. */
+  date: string;
+  dateLabel: string;
+  description: string;
+  /** Positive expense amount (absolute value of the debit). */
+  amount: number;
+  category: CategoryType;
+  hash: string;
+}
+
 export interface BankIncomeImportResult {
   source: 'discount';
   sheetName: string;
   /** Number of Excel files that contributed to this result (1 when single-file). */
   fileCount: number;
   incomes: BankIncomeTransaction[];
+  expenses: BankExpenseTransaction[];
 }

@@ -49,7 +49,7 @@ const CATEGORY_OPTIONS = CATEGORIES.map((category) => ({
 const SOURCE_BADGES: Record<BankSource, { label: string; color: string }> = {
   cal: { label: 'זוהה: כאל ✓', color: 'emerald' },
   max: { label: 'זוהה: מקס ✓', color: 'blue' },
-  discount: { label: 'זוהה: בנק דיסקונט (הכנסות בלבד) ✓', color: 'grape' },
+  discount: { label: 'זוהה: בנק דיסקונט ✓', color: 'grape' },
 };
 
 export type BankImportMode = 'card' | 'bank';
@@ -115,6 +115,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   const [categoryOverrides, setCategoryOverrides] = useState<Record<string, CategoryType>>({});
   const [skipped, setSkipped] = useState<Record<string, boolean>>({});
   const [uncheckedIncome, setUncheckedIncome] = useState<Record<string, boolean>>({});
+  const [uncheckedExpense, setUncheckedExpense] = useState<Record<string, boolean>>({});
   const [targetPeriod, setTargetPeriod] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -129,6 +130,16 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     });
     return ids;
   }, [cardResult, existingHashes]);
+
+  const bankExpenseDuplicateIds = useMemo(() => {
+    const ids = new Set<string>();
+    (bankResult?.expenses ?? []).forEach((expense) => {
+      if (existingHashes.has(expense.hash)) {
+        ids.add(expense.id);
+      }
+    });
+    return ids;
+  }, [bankResult, existingHashes]);
 
   const pendingCount =
     cardResult?.transactions.filter((transaction) => transaction.isPending).length ?? 0;
@@ -167,14 +178,34 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     return (bankResult?.incomes ?? []).filter((income) => uncheckedIncome[income.id] !== true);
   }, [bankResult, uncheckedIncome]);
 
+  const checkedBankExpenses = useMemo(() => {
+    return (bankResult?.expenses ?? []).filter(
+      (expense) =>
+        uncheckedExpense[expense.id] !== true && !bankExpenseDuplicateIds.has(expense.id)
+    );
+  }, [bankResult, uncheckedExpense, bankExpenseDuplicateIds]);
+
   const incomeTotal = useMemo(() => {
     return checkedIncomes.reduce((total, income) => total + income.amount, 0);
   }, [checkedIncomes]);
+
+  const bankExpenseTotal = useMemo(() => {
+    return checkedBankExpenses.reduce((total, expense) => total + expense.amount, 0);
+  }, [checkedBankExpenses]);
 
   const filteredIncomes = useMemo(() => {
     return (bankResult?.incomes ?? []).filter((income) =>
       matchesSearchQuery(
         `${income.description} ${income.label} ${income.dateLabel}`,
+        searchQuery
+      )
+    );
+  }, [bankResult, searchQuery]);
+
+  const filteredBankExpenses = useMemo(() => {
+    return (bankResult?.expenses ?? []).filter((expense) =>
+      matchesSearchQuery(
+        `${expense.description} ${expense.category} ${expense.dateLabel}`,
         searchQuery
       )
     );
@@ -188,6 +219,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     setCategoryOverrides({});
     setSkipped({});
     setUncheckedIncome({});
+    setUncheckedExpense({});
     setTargetPeriod('');
     setSearchQuery('');
   };
@@ -235,8 +267,12 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
         const merged = mergeBankIncomeResults(parsedFiles);
         setBankResult(merged);
         setUncheckedIncome({});
+        setUncheckedExpense({});
         applyPeriod(
-          mostCommonPeriod(merged.incomes) ?? { year: selectedYear, month: selectedMonth }
+          mostCommonPeriod([...merged.incomes, ...merged.expenses]) ?? {
+            year: selectedYear,
+            month: selectedMonth,
+          }
         );
       } else {
         const parsedFiles: BankImportResult[] = [];
@@ -348,16 +384,17 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     const fallbackPeriod = parsePeriodValue(targetPeriod);
     if (!fallbackPeriod) return;
 
-    if (checkedIncomes.length === 0) {
+    if (checkedIncomes.length === 0 && checkedBankExpenses.length === 0) {
       notifications.show({
         color: 'yellow',
         title: 'אין מה לייבא',
-        message: 'כל שורות ההכנסה בוטלו. סמן לפחות שורה אחת לייבוא.',
+        message: 'סמן לפחות הכנסה או הוצאה אחת לייבוא.',
       });
       return;
     }
 
     const monthsTouched = new Set<string>();
+
     checkedIncomes.forEach((income) => {
       const period = periodFromIsoDate(income.date) ?? fallbackPeriod;
       addIncome(period.year, period.month, {
@@ -367,16 +404,38 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
       monthsTouched.add(`${period.year}-${period.month.toString().padStart(2, '0')}`);
     });
 
+    checkedBankExpenses.forEach((expense) => {
+      const period = periodFromIsoDate(expense.date) ?? fallbackPeriod;
+      addExpense(period.year, period.month, {
+        category: categoryOverrides[expense.id] ?? expense.category,
+        description: expense.description,
+        amount: expense.amount,
+        date: expense.date.length > 0 ? expense.date : undefined,
+        note: 'הוראת קבע / תנועת עו״ש',
+        hash: expense.hash,
+      });
+      monthsTouched.add(`${period.year}-${period.month.toString().padStart(2, '0')}`);
+    });
+
     const monthCount = monthsTouched.size;
-    const soleKey = monthsTouched.values().next().value;
-    const solePeriod = (soleKey !== undefined ? parsePeriodValue(soleKey) : null) ?? fallbackPeriod;
+    const parts: string[] = [];
+    if (checkedIncomes.length > 0) {
+      parts.push(`${checkedIncomes.length} הכנסות בסך ${formatCurrency(incomeTotal)}`);
+    }
+    if (checkedBankExpenses.length > 0) {
+      parts.push(
+        `${checkedBankExpenses.length} הוצאות בסך ${formatCurrency(bankExpenseTotal)}`
+      );
+    }
+    const summary = parts.join(' ו-');
+
     notifications.show({
       color: 'emerald',
       title: 'הייבוא הושלם',
       message:
         monthCount === 1
-          ? `${checkedIncomes.length} הכנסות בסך ${formatCurrency(incomeTotal)} נוספו ל${formatMonthYear(solePeriod.year, solePeriod.month)}.`
-          : `${checkedIncomes.length} הכנסות בסך ${formatCurrency(incomeTotal)} פוזרו ל-${monthCount} חודשים לפי תאריך התנועה.`,
+          ? `${summary} נוספו לפי תאריך התנועה.`
+          : `${summary} פוזרו ל-${monthCount} חודשים לפי תאריך התנועה.`,
     });
     close();
   };
@@ -422,9 +481,9 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
           radius="xl"
           leftSection={<IconBuildingBank size={16} />}
           onClick={() => setOpened(true)}
-          aria-label="ייבוא הכנסות מחשבון הבנק"
+          aria-label="ייבוא עו״ש מחשבון הבנק"
         >
-          ייבוא הכנסות 🏦
+          ייבוא בנק 🏦
         </Button>
       ) : (
         <Button
@@ -443,7 +502,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
       <Modal
         opened={opened}
         onClose={close}
-        title={mode === 'bank' ? 'ייבוא הכנסות מחשבון הבנק' : 'ייבוא עסקאות מכרטיס אשראי'}
+        title={mode === 'bank' ? 'ייבוא עו״ש מחשבון הבנק' : 'ייבוא עסקאות מכרטיס אשראי'}
         size="xl"
       >
         <Stack gap="md">
@@ -457,7 +516,11 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                     ? 'גרור לכאן דוחות עובר ושב מדיסקונט (xlsx) או לחץ לבחירה'
                     : 'גרור לכאן דוחות עסקאות מכאל או ממקס (xlsx) או לחץ לבחירה'
                 }
-                subtitle="אפשר כמה קבצים יחד. הקבצים נקראים בדפדפן בלבד ואינם נשלחים לשום מקום. הפורמט מזוהה אוטומטית."
+                subtitle={
+                  mode === 'bank'
+                    ? 'מייבאים זכות כהכנסות, וחובה כהוצאות: הו״ק, שיקים ומשיכות מזומן. כרטיסי אשראי וניירות ערך מסוננים אוטומטית.'
+                    : 'אפשר כמה קבצים יחד. הקבצים נקראים בדפדפן בלבד ואינם נשלחים לשום מקום. הפורמט מזוהה אוטומטית.'
+                }
                 onFiles={(files) => {
                   void handleFiles(files);
                 }}
@@ -715,112 +778,229 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                   </Badge>
                   <Text fz="xs" c={COLORS.textSecondary}>
                     {bankResult.fileCount > 1
-                      ? `${bankResult.fileCount} קבצים · ${bankResult.incomes.length} תנועות`
-                      : `גיליון "${bankResult.sheetName}"`}
+                      ? `${bankResult.fileCount} קבצים · ${bankResult.incomes.length} הכנסות · ${(bankResult.expenses ?? []).length} הוצאות`
+                      : `גיליון "${bankResult.sheetName}" · ${bankResult.incomes.length} הכנסות · ${(bankResult.expenses ?? []).length} הוצאות`}
                   </Text>
                 </Group>
                 {monthSelect}
               </Group>
 
-              <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
-                <Text fz="sm" c={COLORS.textSecondary} maw={480}>
-                  {`${checkedIncomes.length} מתוך ${bankResult.incomes.length} תנועות זכות מסומנות לייבוא. כל שורה תישמר בחודש של התאריך שלה; בחירת החודש משמשת רק לשורות ללא תאריך. תנועות חובה ועמלות סוננו אוטומטית.`}
-                </Text>
-                <TextInput
-                  size="xs"
-                  w={220}
-                  radius="xl"
-                  placeholder="חיפוש תיאור / מקור"
-                  aria-label="חיפוש הכנסות"
-                  leftSection={<IconSearch size={14} />}
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.currentTarget.value)}
-                />
-              </Group>
+              <Text fz="sm" c={COLORS.textSecondary}>
+                כל שורה נשמרת בחודש של התאריך שלה. מיובאים: הו״ק, שיקים יוצאים ומשיכות מזומן. מסוננים: כרטיסי אשראי
+                (כבר ב״ייבוא עסקאות״), ניירות ערך/השקעות, עמלות והעברות בין חשבונות שלך.
+              </Text>
 
-              <Table.ScrollContainer minWidth={640} mah={380} type="native">
-                <Table verticalSpacing="xs" horizontalSpacing="sm" highlightOnHover stickyHeader>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th style={{ width: 52 }}>ייבוא</Table.Th>
-                      <Table.Th style={{ width: 92 }}>תאריך</Table.Th>
-                      <Table.Th>תיאור התנועה</Table.Th>
-                      <Table.Th style={{ width: 150 }}>מקור הכנסה</Table.Th>
-                      <Table.Th style={{ width: 104 }}>סכום</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {filteredIncomes.length === 0 ? (
-                      <Table.Tr>
-                        <Table.Td colSpan={5}>
-                          <Text fz="sm" c={COLORS.textSecondary} ta="center" py="md">
-                            לא נמצאו תנועות מתאימות לחיפוש
-                          </Text>
-                        </Table.Td>
-                      </Table.Tr>
-                    ) : (
-                      filteredIncomes.map((income) => {
-                      const isChecked = uncheckedIncome[income.id] !== true;
+              <TextInput
+                size="xs"
+                w={280}
+                radius="xl"
+                placeholder="חיפוש תיאור / קטגוריה / תאריך"
+                aria-label="חיפוש תנועות בנק"
+                leftSection={<IconSearch size={14} />}
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.currentTarget.value)}
+              />
 
-                      return (
-                        <Table.Tr key={income.id} style={{ opacity: isChecked ? 1 : 0.45 }}>
-                          <Table.Td>
-                            <Checkbox
-                              size="xs"
-                              color="emerald"
-                              checked={isChecked}
-                              aria-label={`ייבוא ${income.description}`}
-                              onChange={(event) =>
-                                setUncheckedIncome((current) => ({
-                                  ...current,
-                                  [income.id]: !event.currentTarget.checked,
-                                }))
-                              }
-                            />
-                          </Table.Td>
-
-                          <Table.Td>
-                            <Text fz="xs" c={COLORS.textSecondary}>
-                              {income.dateLabel}
-                            </Text>
-                          </Table.Td>
-
-                          <Table.Td>
-                            <Group gap={6} wrap="nowrap">
-                              <Text fz="sm" c={COLORS.textPrimary}>
-                                {income.description}
-                              </Text>
-                              {income.needsReview && (
-                                <Badge size="xs" color="yellow" variant="light" radius="sm">
-                                  ⚠️ בדוק ידנית
-                                </Badge>
-                              )}
-                            </Group>
-                          </Table.Td>
-
-                          <Table.Td>
-                            <Text fz="sm" c={COLORS.textPrimary}>
-                              {income.label}
-                            </Text>
-                          </Table.Td>
-
-                          <Table.Td>
-                            <Text fz="sm" fw={600} c={COLORS.income}>
-                              {formatCurrency(income.amount)}
-                            </Text>
-                          </Table.Td>
+              {bankResult.incomes.length > 0 && (
+                <Stack gap="xs">
+                  <Text fw={700} fz="sm" c={COLORS.textPrimary}>
+                    {`הכנסות (זכות) · ${checkedIncomes.length}/${bankResult.incomes.length}`}
+                  </Text>
+                  <Table.ScrollContainer minWidth={640} mah={220} type="native">
+                    <Table verticalSpacing="xs" horizontalSpacing="sm" highlightOnHover stickyHeader>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th style={{ width: 52 }}>ייבוא</Table.Th>
+                          <Table.Th style={{ width: 92 }}>תאריך</Table.Th>
+                          <Table.Th>תיאור התנועה</Table.Th>
+                          <Table.Th style={{ width: 150 }}>מקור הכנסה</Table.Th>
+                          <Table.Th style={{ width: 104 }}>סכום</Table.Th>
                         </Table.Tr>
-                      );
-                    })
-                    )}
-                  </Table.Tbody>
-                </Table>
-              </Table.ScrollContainer>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {filteredIncomes.length === 0 ? (
+                          <Table.Tr>
+                            <Table.Td colSpan={5}>
+                              <Text fz="sm" c={COLORS.textSecondary} ta="center" py="md">
+                                לא נמצאו הכנסות מתאימות לחיפוש
+                              </Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        ) : (
+                          filteredIncomes.map((income) => {
+                            const isChecked = uncheckedIncome[income.id] !== true;
 
-              <Group justify="space-between" align="center">
-                <Text fz="sm" fw={700} c={COLORS.income}>
-                  {`סה"כ הכנסות לייבוא: ${formatCurrency(incomeTotal)}`}
-                </Text>
+                            return (
+                              <Table.Tr key={income.id} style={{ opacity: isChecked ? 1 : 0.45 }}>
+                                <Table.Td>
+                                  <Checkbox
+                                    size="xs"
+                                    color="emerald"
+                                    checked={isChecked}
+                                    aria-label={`ייבוא ${income.description}`}
+                                    onChange={(event) =>
+                                      setUncheckedIncome((current) => ({
+                                        ...current,
+                                        [income.id]: !event.currentTarget.checked,
+                                      }))
+                                    }
+                                  />
+                                </Table.Td>
+                                <Table.Td>
+                                  <Text fz="xs" c={COLORS.textSecondary}>
+                                    {income.dateLabel}
+                                  </Text>
+                                </Table.Td>
+                                <Table.Td>
+                                  <Group gap={6} wrap="nowrap">
+                                    <Text fz="sm" c={COLORS.textPrimary}>
+                                      {income.description}
+                                    </Text>
+                                    {income.needsReview && (
+                                      <Badge size="xs" color="yellow" variant="light" radius="sm">
+                                        ⚠️ בדוק ידנית
+                                      </Badge>
+                                    )}
+                                  </Group>
+                                </Table.Td>
+                                <Table.Td>
+                                  <Text fz="sm" c={COLORS.textPrimary}>
+                                    {income.label}
+                                  </Text>
+                                </Table.Td>
+                                <Table.Td>
+                                  <Text fz="sm" fw={600} c={COLORS.income}>
+                                    {formatCurrency(income.amount)}
+                                  </Text>
+                                </Table.Td>
+                              </Table.Tr>
+                            );
+                          })
+                        )}
+                      </Table.Tbody>
+                    </Table>
+                  </Table.ScrollContainer>
+                </Stack>
+              )}
+
+              {(bankResult.expenses ?? []).length > 0 && (
+                <Stack gap="xs">
+                  <Text fw={700} fz="sm" c={COLORS.textPrimary}>
+                    {`הוצאות (חובה / הו״ק) · ${checkedBankExpenses.length}/${(bankResult.expenses ?? []).length}`}
+                  </Text>
+                  <Table.ScrollContainer minWidth={720} mah={280} type="native">
+                    <Table verticalSpacing="xs" horizontalSpacing="sm" highlightOnHover stickyHeader>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th style={{ width: 52 }}>ייבוא</Table.Th>
+                          <Table.Th style={{ width: 92 }}>תאריך</Table.Th>
+                          <Table.Th>תיאור התנועה</Table.Th>
+                          <Table.Th style={{ width: 168 }}>קטגוריה</Table.Th>
+                          <Table.Th style={{ width: 104 }}>סכום</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {filteredBankExpenses.length === 0 ? (
+                          <Table.Tr>
+                            <Table.Td colSpan={5}>
+                              <Text fz="sm" c={COLORS.textSecondary} ta="center" py="md">
+                                לא נמצאו הוצאות מתאימות לחיפוש
+                              </Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        ) : (
+                          filteredBankExpenses.map((expense) => {
+                            const isDuplicate = bankExpenseDuplicateIds.has(expense.id);
+                            const isChecked =
+                              uncheckedExpense[expense.id] !== true && !isDuplicate;
+                            const selectedCategory =
+                              categoryOverrides[expense.id] ?? expense.category;
+
+                            return (
+                              <Table.Tr
+                                key={expense.id}
+                                style={{ opacity: isChecked && !isDuplicate ? 1 : 0.45 }}
+                              >
+                                <Table.Td>
+                                  <Checkbox
+                                    size="xs"
+                                    color="red"
+                                    checked={isChecked}
+                                    disabled={isDuplicate}
+                                    aria-label={`ייבוא ${expense.description}`}
+                                    onChange={(event) =>
+                                      setUncheckedExpense((current) => ({
+                                        ...current,
+                                        [expense.id]: !event.currentTarget.checked,
+                                      }))
+                                    }
+                                  />
+                                </Table.Td>
+                                <Table.Td>
+                                  <Text fz="xs" c={COLORS.textSecondary}>
+                                    {expense.dateLabel}
+                                  </Text>
+                                </Table.Td>
+                                <Table.Td>
+                                  <Group gap={6} wrap="nowrap">
+                                    <Text fz="sm" c={COLORS.textPrimary}>
+                                      {expense.description}
+                                    </Text>
+                                    {isDuplicate && (
+                                      <Badge size="xs" color="gray" variant="light" radius="sm">
+                                        כבר קיים
+                                      </Badge>
+                                    )}
+                                  </Group>
+                                </Table.Td>
+                                <Table.Td>
+                                  <Select
+                                    size="xs"
+                                    radius="xl"
+                                    aria-label="קטגוריה"
+                                    data={CATEGORY_OPTIONS}
+                                    value={selectedCategory}
+                                    allowDeselect={false}
+                                    disabled={isDuplicate}
+                                    comboboxProps={{ withinPortal: true }}
+                                    onChange={(value) => {
+                                      if (value !== null && isCategoryType(value)) {
+                                        setCategoryOverrides((current) => ({
+                                          ...current,
+                                          [expense.id]: value,
+                                        }));
+                                      }
+                                    }}
+                                  />
+                                </Table.Td>
+                                <Table.Td>
+                                  <Text fz="sm" fw={600} c={COLORS.expense}>
+                                    {formatCurrency(expense.amount)}
+                                  </Text>
+                                </Table.Td>
+                              </Table.Tr>
+                            );
+                          })
+                        )}
+                      </Table.Tbody>
+                    </Table>
+                  </Table.ScrollContainer>
+                </Stack>
+              )}
+
+              <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+                <Stack gap={2}>
+                  {checkedIncomes.length > 0 && (
+                    <Text fz="sm" fw={700} c={COLORS.income}>
+                      {`הכנסות: ${formatCurrency(incomeTotal)}`}
+                    </Text>
+                  )}
+                  {checkedBankExpenses.length > 0 && (
+                    <Text fz="sm" fw={700} c={COLORS.expense}>
+                      {`הוצאות: ${formatCurrency(bankExpenseTotal)}`}
+                    </Text>
+                  )}
+                </Stack>
                 <Group gap="xs">
                   <Button
                     variant="subtle"
@@ -829,6 +1009,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                     onClick={() => {
                       setBankResult(null);
                       setSearchQuery('');
+                      setUncheckedExpense({});
                     }}
                   >
                     בחר קובץ אחר
@@ -837,9 +1018,9 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                     color="emerald"
                     radius="xl"
                     onClick={handleConfirmIncome}
-                    disabled={checkedIncomes.length === 0}
+                    disabled={checkedIncomes.length === 0 && checkedBankExpenses.length === 0}
                   >
-                    {`ייבוא ${checkedIncomes.length} הכנסות`}
+                    {`ייבוא ${checkedIncomes.length + checkedBankExpenses.length} תנועות`}
                   </Button>
                 </Group>
               </Group>

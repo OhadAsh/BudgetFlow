@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import type {
+  BankExpenseTransaction,
   BankImportResult,
   BankIncomeImportResult,
   BankIncomeTransaction,
@@ -289,7 +290,21 @@ const MERCHANT_KEYWORDS: Array<{ keywords: string[]; category: CategoryType }> =
   },
   {
     category: 'דיור',
-    keywords: ['חשמל', 'תאגיד המים', 'ארנונה', 'ועד בית', 'איקאה', 'ikea', 'הום סנטר', 'אייס', 'רהיטים'],
+    keywords: [
+      'שכר דירה',
+      'שכירות',
+      'שכ"ד',
+      'שכ ד',
+      'חשמל',
+      'תאגיד המים',
+      'ארנונה',
+      'ועד בית',
+      'איקאה',
+      'ikea',
+      'הום סנטר',
+      'אייס',
+      'רהיטים',
+    ],
   },
   {
     category: 'חינוך',
@@ -403,6 +418,7 @@ function formatDateLabel(iso: string, raw: unknown): string {
 /**
  * Empty or non-numeric "סכום חיוב" means the charge is still being processed.
  * The sign is preserved so a refund stays a credit rather than becoming a charge.
+ * Also handles accounting negatives: (1,234.56) and 1,234.56-
  */
 function parseChargeCell(value: unknown): number | null {
   if (typeof value === 'number') {
@@ -411,10 +427,22 @@ function parseChargeCell(value: unknown): number | null {
   const text = toSafeString(value);
   if (text.length === 0) return null;
 
-  const cleaned = text.replace(/[^\d.,-]/g, '').replace(/,/g, '');
+  const parenMatch = text.match(/^\((.*)\)$/);
+  const isParenNegative = parenMatch !== null;
+  const body = parenMatch ? parenMatch[1] : text;
+  const isTrailingMinus = !isParenNegative && /-$/.test(body);
+  const cleaned = body.replace(/[^\d.,-]/g, '').replace(/,/g, '').replace(/-/g, '');
   if (cleaned.length === 0) return null;
   const parsed = Number.parseFloat(cleaned);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  if (isParenNegative || isTrailingMinus) {
+    return -Math.abs(parsed);
+  }
+  // Preserve a leading minus that survived earlier cleaning
+  if (/^\s*-/.test(text)) {
+    return -Math.abs(parsed);
+  }
+  return parsed;
 }
 
 /** "תשלום 2 מתוך 12" when the row belongs to an installment plan. */
@@ -812,7 +840,7 @@ export async function parseCardFile(file: File): Promise<BankImportResult> {
 }
 
 /* ------------------------------------------------------------------ *
- * Bank Discount (דיסקונט) account statements — income only
+ * Bank Discount (דיסקונט) account statements — income + expenses
  * ------------------------------------------------------------------ */
 
 const DISCOUNT_SHEET_NAME = 'עובר ושב';
@@ -823,22 +851,83 @@ const DISCOUNT_HEADERS = {
   amount: '₪ זכות/חובה',
 } as const;
 
-/** Rows whose description contains any of these are never income. */
-const BANK_EXCLUDE_KEYWORDS = [
+/**
+ * Investment / securities activity — never income and never an imported
+ * bank expense (portfolio moves are not household spending).
+ */
+const BANK_SECURITIES_KEYWORDS = [
   'ני"ע',
-  'קרן',
+  'ניירות ערך',
+  'נייר ערך',
   'פק"מ',
-  'מגדל',
+  'פקדון',
+  'קופת גמל',
+  'קרן השתלמות',
+  'קרן נאמנות',
   'כספית',
   'ניוד',
-  'מכירת',
-  'עמלת',
-  'עמלה',
-  'דמי ניהול',
+  'תעודת סל',
+  'תעודות סל',
+  'אלטשולר',
+  'מיטב',
+  'פסגות',
+  'אקסלנס',
+  'אי.בי.אי',
+  'ibi',
+  'ברוקר',
+  'מסחר בני',
+  'רכישת ני',
+  'מכירת ני',
+];
+
+/** Bank fees — not useful as day-to-day income/expense rows. */
+const BANK_FEE_KEYWORDS = ['עמלת', 'עמלה', 'דמי ניהול', 'ריבית חובה', 'ריבית זכות'];
+
+/**
+ * Debit rows that settle a credit-card statement — already imported via
+ * "ייבוא עסקאות", so they must not land again as a lump-sum bank expense.
+ */
+const BANK_CARD_SETTLEMENT_KEYWORDS = [
+  'כאל',
+  'מקס',
+  'max',
+  'ישראכרט',
+  'isracard',
+  'ויזה',
+  'visa',
+  'מסטרקארד',
+  'mastercard',
+  'לאומי קארד',
+  'חיוב כרטיס',
+  'כרטיס אשראי',
+  'פירעון כרטיס',
 ];
 
 /** Labels that get the "בדוק ידנית" badge in the preview. */
 const AMBIGUOUS_INCOME_LABELS = ['הפקדת שיק', 'העברה נכנסת'];
+
+/** Standing-order / housing keywords for bank debit categorization. */
+const BANK_HOUSING_KEYWORDS = [
+  'שכר דירה',
+  'שכירות',
+  'שכ"ד',
+  'שכ ד',
+  'ארנונה',
+  'ועד בית',
+  'תאגיד המים',
+  'חשמל',
+  'גז ',
+];
+
+/** Cash withdrawal / ATM — import as expense (category אחר). */
+const BANK_CASH_KEYWORDS = [
+  'משיכת מזומן',
+  'משיכת מזמון',
+  'כספומט',
+  'atm',
+  'משיכה ממכשיר',
+  'משיכת נל"ן',
+];
 
 interface DiscountColumns {
   date: number;
@@ -874,17 +963,68 @@ function mapDiscountColumns(headerRow: SheetRow): DiscountColumns | null {
   return columns;
 }
 
+function matchesAnyKeyword(description: string, keywords: string[]): boolean {
+  const normalized = normalizeSpaces(description).toLowerCase();
+  return keywords.some((keyword) => normalized.includes(keyword.toLowerCase()));
+}
+
 /**
  * True when a credit row must not be imported as income: fees, securities,
- * deposits moving between the user's own accounts, and internal transfers
- * (detected by 'העברה' together with 'חשבון').
+ * and internal transfers between the user's own accounts.
  */
 export function shouldExcludeBankRow(description: string): boolean {
   const normalized = normalizeSpaces(description);
-  if (BANK_EXCLUDE_KEYWORDS.some((keyword) => normalized.includes(keyword))) {
-    return true;
-  }
+  if (matchesAnyKeyword(normalized, BANK_SECURITIES_KEYWORDS)) return true;
+  if (matchesAnyKeyword(normalized, BANK_FEE_KEYWORDS)) return true;
   return normalized.includes('העברה') && normalized.includes('חשבון');
+}
+
+/**
+ * True when a debit must not become a household expense:
+ * credit-card settlements (tracked separately) and securities / investments.
+ * Standing orders, outgoing checks, and ATM cash withdrawals are kept.
+ */
+export function shouldExcludeBankExpense(description: string): boolean {
+  if (matchesAnyKeyword(description, BANK_CARD_SETTLEMENT_KEYWORDS)) return true;
+  if (matchesAnyKeyword(description, BANK_SECURITIES_KEYWORDS)) return true;
+  if (matchesAnyKeyword(description, BANK_FEE_KEYWORDS)) return true;
+  const normalized = normalizeSpaces(description);
+  return normalized.includes('העברה') && normalized.includes('חשבון');
+}
+
+/** Maps a bank debit description to an expense category. */
+export function mapBankExpenseCategory(description: string): CategoryType {
+  const normalized = normalizeSpaces(description);
+  const lower = normalized.toLowerCase();
+
+  if (BANK_HOUSING_KEYWORDS.some((keyword) => lower.includes(keyword.toLowerCase().trim()))) {
+    return 'דיור';
+  }
+
+  // Outgoing checks and ATM cash — real spending without a merchant category.
+  if (
+    lower.includes('שיק') ||
+    lower.includes('שיקים') ||
+    BANK_CASH_KEYWORDS.some((keyword) => lower.includes(keyword.toLowerCase()))
+  ) {
+    return 'אחר';
+  }
+
+  let best: { category: CategoryType; length: number } | null = null;
+  MERCHANT_KEYWORDS.forEach((entry) => {
+    entry.keywords.forEach((keyword) => {
+      if (lower.includes(keyword.toLowerCase()) && keyword.length >= (best?.length ?? 0)) {
+        best = { category: entry.category, length: keyword.length };
+      }
+    });
+  });
+  return best?.category ?? 'אחר';
+}
+
+/** Short display label for a bank debit. */
+export function mapBankExpenseDescription(description: string): string {
+  const normalized = normalizeSpaces(description);
+  return normalized.length > 0 ? normalized : 'הוצאה בנקאית';
 }
 
 /** Maps a bank movement description to an IncomeSource label. */
@@ -961,8 +1101,8 @@ export function periodFromIsoDate(iso: string): { year: number; month: number } 
   return { year, month };
 }
 
-/** Reads only the credit (זכות) rows that pass the income filters. */
-export function parseDiscountRows(rows: SheetRow[]): BankIncomeTransaction[] {
+/** Reads credit (זכות) rows that pass the income filters. */
+export function parseDiscountIncomeRows(rows: SheetRow[]): BankIncomeTransaction[] {
   const headerIndex = findDiscountHeaderRow(rows);
   if (headerIndex === -1) return [];
 
@@ -999,7 +1139,51 @@ export function parseDiscountRows(rows: SheetRow[]): BankIncomeTransaction[] {
   return incomes;
 }
 
-/** Parses a Bank Discount statement file into income rows for preview. */
+/** @deprecated Alias — prefer parseDiscountIncomeRows. */
+export function parseDiscountRows(rows: SheetRow[]): BankIncomeTransaction[] {
+  return parseDiscountIncomeRows(rows);
+}
+
+/** Reads debit (חובה) rows — rent standing orders, utilities, transfers out. */
+export function parseDiscountExpenseRows(rows: SheetRow[]): BankExpenseTransaction[] {
+  const headerIndex = findDiscountHeaderRow(rows);
+  if (headerIndex === -1) return [];
+
+  const columns = mapDiscountColumns(rows[headerIndex]);
+  if (!columns) return [];
+
+  const expenses: BankExpenseTransaction[] = [];
+
+  rows.slice(headerIndex + 1).forEach((row) => {
+    if (isBlankRow(row) || isTotalRow(toSafeString(row[0]))) return;
+
+    const description = toSafeString(row[columns.description]);
+    if (description.length === 0 || shouldExcludeBankExpense(description)) return;
+
+    const signed = parseChargeCell(row[columns.amount]);
+    // Debits are negative on Discount statements.
+    if (signed === null || signed >= 0) return;
+
+    const amount = Math.abs(signed);
+    const rawDate = columns.date === -1 ? '' : row[columns.date];
+    const isoDate = parseDiscountDate(rawDate);
+    const cleanedDescription = mapBankExpenseDescription(description);
+
+    expenses.push({
+      id: crypto.randomUUID(),
+      date: isoDate,
+      dateLabel: formatDateLabel(isoDate, rawDate),
+      description: cleanedDescription,
+      amount,
+      category: mapBankExpenseCategory(description),
+      hash: buildTransactionHash(isoDate, cleanedDescription, amount),
+    });
+  });
+
+  return expenses;
+}
+
+/** Parses a Bank Discount statement file into income + expense rows for preview. */
 export async function parseBankIncomeFile(file: File): Promise<BankIncomeImportResult> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
@@ -1015,12 +1199,13 @@ export async function parseBankIncomeFile(file: File): Promise<BankIncomeImportR
     });
     if (!isDiscountSheet(sheetName, rows)) continue;
 
-    const incomes = parseDiscountRows(rows);
-    if (incomes.length === 0) {
-      throw new Error('זוהה דוח עובר ושב אך לא נמצאו בו תנועות זכות לייבוא.');
+    const incomes = parseDiscountIncomeRows(rows);
+    const expenses = parseDiscountExpenseRows(rows);
+    if (incomes.length === 0 && expenses.length === 0) {
+      throw new Error('זוהה דוח עובר ושב אך לא נמצאו בו תנועות לייבוא.');
     }
 
-    return { source: 'discount', sheetName, fileCount: 1, incomes };
+    return { source: 'discount', sheetName, fileCount: 1, incomes, expenses };
   }
 
   throw new Error(
@@ -1069,7 +1254,7 @@ function buildIncomeFingerprint(income: BankIncomeTransaction): string {
   return `${income.date}|${income.description}|${income.amount}`;
 }
 
-/** Merges several Discount income parses into one preview, dropping exact duplicates. */
+/** Merges several Discount statement parses into one preview, dropping exact duplicates. */
 export function mergeBankIncomeResults(
   results: BankIncomeImportResult[]
 ): BankIncomeImportResult {
@@ -1077,17 +1262,28 @@ export function mergeBankIncomeResults(
     throw new Error('לא נמצאו קבצים תקינים לייבוא.');
   }
   if (results.length === 1) {
-    return results[0];
+    return {
+      ...results[0],
+      expenses: results[0].expenses ?? [],
+    };
   }
 
-  const seen = new Set<string>();
+  const seenIncomes = new Set<string>();
   const incomes: BankIncomeTransaction[] = [];
+  const seenExpenseHashes = new Set<string>();
+  const expenses: BankExpenseTransaction[] = [];
+
   results.forEach((result) => {
     result.incomes.forEach((income) => {
       const key = buildIncomeFingerprint(income);
-      if (seen.has(key)) return;
-      seen.add(key);
+      if (seenIncomes.has(key)) return;
+      seenIncomes.add(key);
       incomes.push(income);
+    });
+    (result.expenses ?? []).forEach((expense) => {
+      if (seenExpenseHashes.has(expense.hash)) return;
+      seenExpenseHashes.add(expense.hash);
+      expenses.push(expense);
     });
   });
 
@@ -1096,6 +1292,7 @@ export function mergeBankIncomeResults(
     sheetName: `${results.length} קבצים`,
     fileCount: results.length,
     incomes,
+    expenses,
   };
 }
 
