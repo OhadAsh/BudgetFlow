@@ -1,0 +1,126 @@
+---
+alwaysApply: true
+---
+
+# .cursorrules — Expense Tracker (Hebrew, React + Mantine Light Theme, GitHub Pages)
+
+## Core behavior
+- Never ask clarifying questions. Make the best decision and proceed.
+- Always implement the full feature end-to-end before moving to the next file.
+- Never leave TODO comments or placeholder implementations.
+- If something is ambiguous, choose the most production-ready approach.
+
+## Language & locale
+- All UI strings must be in Hebrew.
+- All components must work in RTL layout (dir="rtl").
+- Format currency as ₪X,XXX using he-IL locale.
+- Month names from HEBREW_MONTHS constant in constants.ts — never hardcode.
+- Short month names from SHORT_MONTHS constant — use in chart axes.
+
+## TypeScript
+- Strict mode only. No `any` types ever.
+- All props must have explicit TypeScript interfaces.
+- All function return types must be explicitly declared.
+- Use `unknown` instead of `any` when type is uncertain.
+
+## React
+- Functional components only. No class components.
+- All state via Zustand store (useExpenseStore) — no prop drilling beyond 1 level.
+- All business logic in lib/ or hooks/ — never inside components.
+- useMonthData hook must be the single source of truth for current month stats.
+
+## Styling — Mantine LIGHT theme only
+- Mantine v7 components for ALL UI. No Tailwind. No CSS Modules. No styled-components.
+- defaultColorScheme: 'light' — never add dark mode.
+- Page background: #F8FAFC — set on <AppShell> or <Box bg="#F8FAFC">.
+- Cards: white background, shadow="sm", radius="lg", NO withBorder.
+- Buttons: always radius="xl" (pill shape).
+- Use CSS variables: var(--mantine-color-emerald-6) for primary green.
+- Never hardcode hex colors inside components — use constants.ts values.
+- For income: color="emerald" or color="#10b981".
+- For expenses: color="red" or color="#ef4444".
+- For savings positive: color="emerald". Negative: color="red".
+
+## Mantine component rules
+- Month navigation → <ActionIcon variant="subtle"> for arrows
+- Category display → always show emoji from CATEGORY_ICONS + colored <Badge>
+- Expense amount edit → <NumberInput prefix="₪"> inline on click
+- Year select → <Select> with years derived from store data
+- Import dropzone → @mantine/dropzone <Dropzone accept={['xlsx']}>
+- Notifications → @mantine/notifications only, never custom toast
+- Mobile nav → <Tabs> at bottom with IconChartPie / IconList / IconCalendar
+- Progress bar → <Progress> for savings rate, color by SAVINGS_RATE_THRESHOLDS
+- Savings ring → <RingProgress> in MonthlySummary card
+
+## Charts — Recharts only
+- All charts in ResponsiveContainer.
+- Currency tooltip: ₪X,XXX format, Hebrew labels.
+- CategoryPieChart: donut style, innerRadius={60}, center label = largest category.
+- SavingsBarChart: green bar if positive, red if negative, ghost for empty months.
+- TrendLineChart: two lines (income=green, expenses=red), type="monotone".
+- All charts animate on mount: isAnimationActive={true} animationDuration={600}.
+
+## State rules
+- Single store: useExpenseStore — persisted to "expense-tracker-v1".
+- Seed data injected ONCE on first load if months array is empty.
+- All IDs generated with crypto.randomUUID().
+- Never mutate state directly — always use Zustand actions.
+- selectedYear and selectedMonth always initialized to current date.
+
+## Category rules
+- CategoryType is a strict union — never use free strings for categories.
+- Always import CATEGORY_COLORS and CATEGORY_ICONS from constants.ts.
+- Category badge always shows: emoji + Hebrew name + colored background.
+
+## Excel rules
+- Export: SheetJS, one sheet per month, sheet name = "ינואר 2026" format.
+- Import: parse sheet name to extract month + year, show preview before confirm.
+- On parse error: notifications.show({ color: 'red', title: 'שגיאה', message: '...' }).
+- Never crash silently on bad Excel input.
+
+## Calculations
+- All math in src/lib/calculations.ts — pure functions only.
+- netSaved = totalIncome - totalExpenses (never include 'חיסכון' category in expenses).
+- savingsRate = netSaved / totalIncome * 100.
+- annualStats must handle months with no data gracefully (treat as zero).
+
+## File structure — never deviate
+src/
+  types/index.ts
+  lib/constants.ts
+  lib/utils.ts
+  lib/calculations.ts
+  lib/excelParser.ts
+  theme.ts
+  store/useExpenseStore.ts
+  components/layout/Header.tsx
+  components/layout/BottomNav.tsx
+  components/month/MonthSelector.tsx
+  components/month/IncomeSection.tsx
+  components/month/ExpenseTable.tsx
+  components/month/ExpenseRow.tsx
+  components/month/MonthlySummary.tsx
+  components/charts/CategoryPieChart.tsx
+  components/charts/SavingsBarChart.tsx
+  components/charts/TrendLineChart.tsx
+  components/annual/YearSelector.tsx
+  components/annual/AnnualSummary.tsx
+  components/excel/ExcelControls.tsx
+  hooks/useMonthData.ts
+
+## GitHub Pages
+- vite.config.ts must have base: './'
+- All imports relative paths.
+- No server-side code.
+- Build output to /dist.
+- manualChunks must split: vendor-react, vendor-mantine, vendor-charts, vendor-excel, vendor-icons.
+
+## Accessibility
+- All icon-only buttons must have aria-label in Hebrew.
+- All inputs must have associated label.
+- Category select must have aria-label="קטגוריה".
+
+## When editing existing files
+- Always read the full file before making changes.
+- Never remove existing functionality when adding new features.
+- Keep all TypeScript interfaces intact unless explicitly instructed.

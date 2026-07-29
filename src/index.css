@@ -1,0 +1,30 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #f8fafc;
+  color: #1e293b;
+  font-family: Heebo, Inter, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+}
+
+/* Recharts renders LTR internally; keep its SVG text readable inside the RTL app. */
+.recharts-wrapper text {
+  direction: ltr;
+  unicode-bidi: plaintext;
+}
