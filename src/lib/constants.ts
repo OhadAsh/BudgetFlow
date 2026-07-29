@@ -99,9 +99,12 @@ export const SECTION_TITLE_STYLE = {
 };
 
 export const BIG_NUMBER_STYLE = {
-  fontSize: '2rem',
+  fontSize: 'clamp(1.25rem, 2.4vw, 2rem)',
   fontWeight: 700,
   lineHeight: 1.15,
+  whiteSpace: 'nowrap' as const,
+  direction: 'ltr' as const,
+  unicodeBidi: 'isolate' as const,
 };
 
 export const EXCEL_HEADERS = {

@@ -260,9 +260,11 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
         setCardResult(merged);
         setCategoryOverrides({});
         setSkipped({});
+        // Prefer actual transaction dates for the fallback month — chargePeriod is the
+        // statement billing month and must not drain all rows into one bucket.
         applyPeriod(
-          merged.chargePeriod ??
-            mostCommonPeriod(merged.transactions) ?? { year: selectedYear, month: selectedMonth }
+          mostCommonPeriod(merged.transactions) ??
+            merged.chargePeriod ?? { year: selectedYear, month: selectedMonth }
         );
       }
 
@@ -286,8 +288,8 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
 
   const handleConfirmExpenses = (): void => {
     if (!cardResult) return;
-    const period = parsePeriodValue(targetPeriod);
-    if (!period) return;
+    const fallbackPeriod = parsePeriodValue(targetPeriod);
+    if (!fallbackPeriod) return;
 
     const ids = new Set(importableIds);
     const rows = cardResult.transactions.filter((transaction) => ids.has(transaction.id));
@@ -300,12 +302,16 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
       return;
     }
 
+    const monthsTouched = new Set<string>();
     rows.forEach((transaction) => {
       const isCredit = isCreditAmount(transaction.chargeAmount);
       const noteParts = [
         isCredit ? 'זיכוי' : null,
         transaction.installment ?? null,
       ].filter((part): part is string => part !== null);
+
+      // Bucket by transaction date — never dump everything into the statement charge month.
+      const period = periodFromIsoDate(transaction.date) ?? fallbackPeriod;
 
       addExpense(period.year, period.month, {
         category: categoryOverrides[transaction.id] ?? transaction.category,
@@ -316,16 +322,23 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
         note: noteParts.length > 0 ? noteParts.join(' · ') : undefined,
         hash: transaction.hash,
       });
+      monthsTouched.add(`${period.year}-${period.month.toString().padStart(2, '0')}`);
     });
 
     const creditRows = rows.filter((transaction) => isCreditAmount(transaction.chargeAmount)).length;
+    const monthCount = monthsTouched.size;
+    const soleKey = monthsTouched.values().next().value;
+    const solePeriod = (soleKey !== undefined ? parsePeriodValue(soleKey) : null) ?? fallbackPeriod;
+    const creditSuffix =
+      creditRows > 0 ? ` (כולל ${creditRows} זיכויים שמקטינים הוצאות)` : '';
+
     notifications.show({
       color: 'emerald',
       title: 'הייבוא הושלם',
       message:
-        creditRows > 0
-          ? `${rows.length} עסקאות בסך ${formatCurrency(importTotal)} נוספו ל${formatMonthYear(period.year, period.month)} (כולל ${creditRows} זיכויים שמקטינים הוצאות).`
-          : `${rows.length} עסקאות בסך ${formatCurrency(importTotal)} נוספו ל${formatMonthYear(period.year, period.month)}.`,
+        monthCount === 1
+          ? `${rows.length} עסקאות בסך ${formatCurrency(importTotal)} נוספו ל${formatMonthYear(solePeriod.year, solePeriod.month)}.${creditSuffix}`
+          : `${rows.length} עסקאות בסך ${formatCurrency(importTotal)} פוזרו ל-${monthCount} חודשים לפי תאריך העסקה.${creditSuffix}`,
     });
     close();
   };
@@ -355,12 +368,14 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     });
 
     const monthCount = monthsTouched.size;
+    const soleKey = monthsTouched.values().next().value;
+    const solePeriod = (soleKey !== undefined ? parsePeriodValue(soleKey) : null) ?? fallbackPeriod;
     notifications.show({
       color: 'emerald',
       title: 'הייבוא הושלם',
       message:
         monthCount === 1
-          ? `${checkedIncomes.length} הכנסות בסך ${formatCurrency(incomeTotal)} נוספו ל${formatMonthYear(fallbackPeriod.year, fallbackPeriod.month)}.`
+          ? `${checkedIncomes.length} הכנסות בסך ${formatCurrency(incomeTotal)} נוספו ל${formatMonthYear(solePeriod.year, solePeriod.month)}.`
           : `${checkedIncomes.length} הכנסות בסך ${formatCurrency(incomeTotal)} פוזרו ל-${monthCount} חודשים לפי תאריך התנועה.`,
     });
     close();
@@ -383,7 +398,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
       size="xs"
       w={150}
       radius="xl"
-      aria-label={mode === 'bank' ? 'חודש ברירת מחדל לשורות ללא תאריך' : 'חודש היעד לייבוא'}
+      aria-label="חודש ברירת מחדל לשורות ללא תאריך"
       data={monthOptions}
       value={targetPeriod}
       allowDeselect={false}
@@ -483,11 +498,11 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                 {monthSelect}
               </Group>
 
-              <Group justify="space-between" align="center" wrap="wrap">
-                <Text fz="sm" c={COLORS.textSecondary}>
+              <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
+                <Text fz="sm" c={COLORS.textSecondary} maw={520}>
                   {`${importableIds.length} עסקאות מוכנות לייבוא, ${pendingCount} בקליטה (ידולגו), ${duplicateIds.size} כפילויות${
                     creditCount > 0 ? `, ${creditCount} זיכויים (מקטינים הוצאות)` : ''
-                  }`}
+                  }. כל עסקה תישמר בחודש של התאריך שלה; בחירת החודש משמשת רק לשורות ללא תאריך.`}
                 </Text>
                 <TextInput
                   size="xs"
@@ -667,7 +682,15 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                   {`סה"כ לייבוא: ${formatCurrency(importTotal)}`}
                 </Text>
                 <Group gap="xs">
-                  <Button variant="subtle" color="gray" radius="xl" onClick={() => setCardResult(null)}>
+                  <Button
+                    variant="subtle"
+                    color="gray"
+                    radius="xl"
+                    onClick={() => {
+                      setCardResult(null);
+                      setSearchQuery('');
+                    }}
+                  >
                     בחר קובץ אחר
                   </Button>
                   <Button
@@ -699,9 +722,21 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                 {monthSelect}
               </Group>
 
-              <Text fz="sm" c={COLORS.textSecondary}>
-                {`${checkedIncomes.length} מתוך ${bankResult.incomes.length} תנועות זכות מסומנות לייבוא. כל שורה תישמר בחודש של התאריך שלה; בחירת החודש משמשת רק לשורות ללא תאריך. תנועות חובה ועמלות סוננו אוטומטית.`}
-              </Text>
+              <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
+                <Text fz="sm" c={COLORS.textSecondary} maw={480}>
+                  {`${checkedIncomes.length} מתוך ${bankResult.incomes.length} תנועות זכות מסומנות לייבוא. כל שורה תישמר בחודש של התאריך שלה; בחירת החודש משמשת רק לשורות ללא תאריך. תנועות חובה ועמלות סוננו אוטומטית.`}
+                </Text>
+                <TextInput
+                  size="xs"
+                  w={220}
+                  radius="xl"
+                  placeholder="חיפוש תיאור / מקור"
+                  aria-label="חיפוש הכנסות"
+                  leftSection={<IconSearch size={14} />}
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                />
+              </Group>
 
               <Table.ScrollContainer minWidth={640} mah={380} type="native">
                 <Table verticalSpacing="xs" horizontalSpacing="sm" highlightOnHover stickyHeader>
@@ -715,7 +750,16 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
-                    {bankResult.incomes.map((income) => {
+                    {filteredIncomes.length === 0 ? (
+                      <Table.Tr>
+                        <Table.Td colSpan={5}>
+                          <Text fz="sm" c={COLORS.textSecondary} ta="center" py="md">
+                            לא נמצאו תנועות מתאימות לחיפוש
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    ) : (
+                      filteredIncomes.map((income) => {
                       const isChecked = uncheckedIncome[income.id] !== true;
 
                       return (
@@ -767,7 +811,8 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                           </Table.Td>
                         </Table.Tr>
                       );
-                    })}
+                    })
+                    )}
                   </Table.Tbody>
                 </Table>
               </Table.ScrollContainer>
@@ -777,7 +822,15 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                   {`סה"כ הכנסות לייבוא: ${formatCurrency(incomeTotal)}`}
                 </Text>
                 <Group gap="xs">
-                  <Button variant="subtle" color="gray" radius="xl" onClick={() => setBankResult(null)}>
+                  <Button
+                    variant="subtle"
+                    color="gray"
+                    radius="xl"
+                    onClick={() => {
+                      setBankResult(null);
+                      setSearchQuery('');
+                    }}
+                  >
                     בחר קובץ אחר
                   </Button>
                   <Button

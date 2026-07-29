@@ -2,16 +2,19 @@ import { useState } from 'react';
 import {
   ActionIcon,
   Badge,
+  Group,
   NumberInput,
   Select,
+  Stack,
   Table,
+  Text,
   TextInput,
   UnstyledButton,
 } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
 import type { CategoryType, Expense } from '../../types';
 import { CATEGORIES, CATEGORY_COLORS, CATEGORY_ICONS, COLORS } from '../../lib/constants';
-import { formatCurrency, isCategoryType } from '../../lib/utils';
+import { formatCurrency, isCategoryType, isCreditAmount } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 
 interface ExpenseRowProps {
@@ -31,6 +34,7 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
   const updateExpense = useExpenseStore((state) => state.updateExpense);
   const removeExpense = useExpenseStore((state) => state.removeExpense);
   const [editing, setEditing] = useState<EditingField>(null);
+  const isCredit = isCreditAmount(expense.amount);
 
   const handleCategoryChange = (value: string | null): void => {
     if (value !== null && isCategoryType(value)) {
@@ -102,13 +106,31 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
             }}
           />
         ) : (
-          <UnstyledButton
-            onClick={() => setEditing('description')}
-            aria-label={`עריכת תיאור ${expense.description}`}
-            style={{ fontSize: 14, color: COLORS.textPrimary, width: '100%', textAlign: 'start' }}
-          >
-            {expense.description}
-          </UnstyledButton>
+          <Stack gap={2}>
+            <UnstyledButton
+              onClick={() => setEditing('description')}
+              aria-label={`עריכת תיאור ${expense.description}`}
+              style={{ fontSize: 14, color: COLORS.textPrimary, width: '100%', textAlign: 'start' }}
+            >
+              {expense.description}
+            </UnstyledButton>
+            {(isCredit || (expense.note !== undefined && expense.note.length > 0)) && (
+              <Group gap={4}>
+                {isCredit && (
+                  <Badge size="xs" color="emerald" variant="light" radius="sm">
+                    זיכוי
+                  </Badge>
+                )}
+                {expense.note !== undefined &&
+                  expense.note.length > 0 &&
+                  expense.note !== 'זיכוי' && (
+                    <Text fz="xs" c={COLORS.textSecondary}>
+                      {expense.note.replace(/^זיכוי · /, '')}
+                    </Text>
+                  )}
+              </Group>
+            )}
+          </Stack>
         )}
       </Table.Td>
 
@@ -118,8 +140,8 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
             size="xs"
             autoFocus
             prefix="₪"
-            min={0}
-            step={50}
+            allowNegative
+            decimalScale={2}
             thousandSeparator=","
             hideControls
             aria-label="סכום הוצאה"
@@ -127,7 +149,7 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
             onBlur={(event) => {
               const parsed = Number.parseFloat(event.currentTarget.value.replace(/[^\d.-]/g, ''));
               updateExpense(year, month, expense.id, {
-                amount: Number.isFinite(parsed) ? Math.abs(parsed) : 0,
+                amount: Number.isFinite(parsed) ? parsed : 0,
               });
               setEditing(null);
             }}
@@ -144,7 +166,14 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
           <UnstyledButton
             onClick={() => setEditing('amount')}
             aria-label={`עריכת סכום ${expense.description}`}
-            style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: isCredit ? COLORS.income : COLORS.expense,
+              direction: 'ltr',
+              unicodeBidi: 'isolate',
+              whiteSpace: 'nowrap',
+            }}
           >
             {formatCurrency(expense.amount)}
           </UnstyledButton>

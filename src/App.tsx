@@ -28,20 +28,27 @@ export default function App(): JSX.Element {
         <Header />
       </Box>
 
-      <Container size="xl" px={{ base: 'sm', sm: 'lg' }} py="md" pb={isDesktop ? 'xl' : 96}>
+      <Container
+        size="xl"
+        px={{ base: 'sm', sm: 'lg' }}
+        py="md"
+        pb={isDesktop ? 'xl' : 96}
+        style={{ overflowX: 'clip', maxWidth: '100%' }}
+      >
         {isDesktop ? (
           <Stack gap="lg">
-            <Grid gutter="md" align="stretch">
-              <Grid.Col span={5}>
-                <Stack gap="md">
+            <MonthlySummary />
+
+            <Grid gutter="md" align="stretch" styles={{ inner: { width: '100%' } }}>
+              <Grid.Col span={5} style={{ minWidth: 0, maxWidth: '100%' }}>
+                <Stack gap="md" style={{ minWidth: 0 }}>
                   <MonthSelector />
                   <IncomeSection />
                   <ExpenseTable />
                 </Stack>
               </Grid.Col>
-              <Grid.Col span={7}>
-                <Stack gap="md">
-                  <MonthlySummary />
+              <Grid.Col span={7} style={{ minWidth: 0, maxWidth: '100%' }}>
+                <Stack gap="md" style={{ minWidth: 0 }}>
                   <CategoryPieChart />
                   <SavingsBarChart />
                   <TrendLineChart />

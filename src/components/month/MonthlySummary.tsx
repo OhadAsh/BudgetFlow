@@ -19,9 +19,9 @@ export function MonthlySummary(): JSX.Element {
   const hasPrevious = previousStats.hasData;
 
   return (
-    <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="md">
-      <Card>
-        <Stack gap={4}>
+    <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
+      <Card h="100%">
+        <Stack gap={6} justify="space-between" h="100%">
           <Text style={SECTION_TITLE_STYLE} fz="0.8125rem">
             💚 הכנסות
           </Text>
@@ -29,13 +29,18 @@ export function MonthlySummary(): JSX.Element {
             {formatCurrency(stats.totalIncome)}
           </Text>
           {hasPrevious ? (
-            <Group gap={4} align="center">
+            <Group gap={4} align="center" wrap="wrap">
               {incomeDelta >= 0 ? (
                 <IconTrendingUp size={16} color={COLORS.income} />
               ) : (
                 <IconTrendingDown size={16} color={COLORS.expense} />
               )}
-              <Text fz="xs" c={incomeDelta >= 0 ? 'emerald.7' : 'red.6'} fw={600}>
+              <Text
+                fz="xs"
+                c={incomeDelta >= 0 ? 'emerald.7' : 'red.6'}
+                fw={600}
+                style={{ direction: 'ltr', unicodeBidi: 'isolate', whiteSpace: 'nowrap' }}
+              >
                 {formatSignedCurrency(incomeDelta)}
               </Text>
               <Text fz="xs" c={COLORS.textSecondary}>
@@ -50,20 +55,25 @@ export function MonthlySummary(): JSX.Element {
         </Stack>
       </Card>
 
-      <Card>
-        <Stack gap={4}>
+      <Card h="100%">
+        <Stack gap={6} justify="space-between" h="100%">
           <Text style={SECTION_TITLE_STYLE} fz="0.8125rem">
             🔴 הוצאות
           </Text>
           <Text style={BIG_NUMBER_STYLE} c={COLORS.expense}>
             {formatCurrency(stats.totalExpenses)}
           </Text>
-          <Group gap={6} align="center">
+          <Group gap={6} align="center" wrap="wrap">
             <Text fz="xs" c={COLORS.textSecondary}>
               {`קטגוריות: ${stats.activeCategoryCount}`}
             </Text>
             {hasPrevious && (
-              <Text fz="xs" c={expensesDelta <= 0 ? 'emerald.7' : 'red.6'} fw={600}>
+              <Text
+                fz="xs"
+                c={expensesDelta <= 0 ? 'emerald.7' : 'red.6'}
+                fw={600}
+                style={{ direction: 'ltr', unicodeBidi: 'isolate', whiteSpace: 'nowrap' }}
+              >
                 {formatSignedCurrency(expensesDelta)}
               </Text>
             )}
@@ -71,17 +81,13 @@ export function MonthlySummary(): JSX.Element {
         </Stack>
       </Card>
 
-      <Card>
-        <Group justify="space-between" align="center" wrap="nowrap" gap="sm">
-          <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
+      <Card h="100%" style={{ overflow: 'hidden' }}>
+        <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm" h="100%">
+          <Stack gap={6} style={{ flex: 1, minWidth: 0 }} justify="space-between">
             <Text style={SECTION_TITLE_STYLE} fz="0.8125rem">
               ✨ נחסך
             </Text>
-            <Text
-              style={{ ...BIG_NUMBER_STYLE, direction: 'ltr', unicodeBidi: 'isolate' }}
-              c={savingsColor}
-              ta="right"
-            >
+            <Text style={BIG_NUMBER_STYLE} c={savingsColor}>
               {formatCurrency(stats.netSaved)}
             </Text>
             <Text fz="xs" c={COLORS.textSecondary} lineClamp={2}>
@@ -96,14 +102,20 @@ export function MonthlySummary(): JSX.Element {
             />
           </Stack>
           <RingProgress
-            size={72}
-            thickness={8}
+            size={64}
+            thickness={7}
             roundCaps
             style={{ flexShrink: 0 }}
             aria-label="טבעת שיעור חיסכון"
             sections={[{ value: ringValue, color: rateColor }]}
             label={
-              <Text ta="center" fw={700} fz="xs" c={savingsColor} style={{ direction: 'ltr' }}>
+              <Text
+                ta="center"
+                fw={700}
+                fz="xs"
+                c={savingsColor}
+                style={{ direction: 'ltr', unicodeBidi: 'isolate', whiteSpace: 'nowrap' }}
+              >
                 {formatPercent(stats.savingsRate)}
               </Text>
             }

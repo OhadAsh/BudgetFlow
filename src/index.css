@@ -15,6 +15,13 @@ body {
   font-family: Heebo, Inter, sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+  max-width: 100%;
+}
+
+#root {
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 button,

@@ -85,23 +85,23 @@ export function Header(): JSX.Element {
         py="sm"
         style={{ borderBottom: `1px solid ${COLORS.border}` }}
       >
-        <Group justify="space-between" wrap="nowrap" gap="sm">
-          <Group gap="sm" wrap="nowrap">
-            <ThemeIcon size={40} radius="lg" color="emerald" variant="light">
+        <Group justify="space-between" wrap="wrap" gap="sm">
+          <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+            <ThemeIcon size={40} radius="lg" color="emerald" variant="light" style={{ flexShrink: 0 }}>
               <IconWallet size={22} />
             </ThemeIcon>
-            <Stack gap={0}>
-              <Text fw={700} fz="lg" c={COLORS.textPrimary} style={{ lineHeight: 1.2 }}>
+            <Stack gap={0} style={{ minWidth: 0 }}>
+              <Text fw={700} fz="lg" c={COLORS.textPrimary} style={{ lineHeight: 1.2 }} truncate>
                 מעקב הוצאות
               </Text>
-              <Text fz="xs" c={COLORS.textSecondary}>
+              <Text fz="xs" c={COLORS.textSecondary} truncate>
                 תכנון פיננסי אישי
               </Text>
             </Stack>
           </Group>
 
-          <Group gap="md" wrap="nowrap">
-            <Group gap="xs" wrap="nowrap">
+          <Group gap="sm" wrap="wrap" justify="flex-end" style={{ flex: '1 1 auto', minWidth: 0 }}>
+            <Group gap="xs" wrap="wrap">
               <Box visibleFrom="xs">
                 <YearSelector size="sm" width={116} />
               </Box>

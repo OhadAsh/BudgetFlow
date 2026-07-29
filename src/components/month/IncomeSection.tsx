@@ -43,11 +43,17 @@ export function IncomeSection(): JSX.Element {
     editing !== null && editing.id === source.id && editing.field === field;
 
   return (
-    <Card>
-      <Stack gap="sm">
-        <Group justify="space-between" align="center">
-          <Text style={SECTION_TITLE_STYLE}>💰 הכנסות החודש</Text>
-          <Text fw={700} c="emerald.6">
+    <Card style={{ overflow: 'hidden' }}>
+      <Stack gap="sm" style={{ minWidth: 0 }}>
+        <Group justify="space-between" align="center" wrap="nowrap" gap="sm">
+          <Text style={{ ...SECTION_TITLE_STYLE, minWidth: 0 }} truncate>
+            💰 הכנסות החודש
+          </Text>
+          <Text
+            fw={700}
+            c="emerald.6"
+            style={{ direction: 'ltr', unicodeBidi: 'isolate', whiteSpace: 'nowrap', flexShrink: 0 }}
+          >
             {formatCurrency(stats.totalIncome)}
           </Text>
         </Group>
@@ -57,6 +63,7 @@ export function IncomeSection(): JSX.Element {
             לא נרשמו הכנסות לחודש זה
           </Text>
         ) : (
+          <Table.ScrollContainer minWidth={280} type="native">
           <Table verticalSpacing="xs" horizontalSpacing="xs" highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -138,7 +145,14 @@ export function IncomeSection(): JSX.Element {
                       <UnstyledButton
                         onClick={() => setEditing({ id: source.id, field: 'amount' })}
                         aria-label={`עריכת סכום ${source.label}`}
-                        style={{ fontSize: 14, fontWeight: 600, color: COLORS.income }}
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: COLORS.income,
+                          direction: 'ltr',
+                          unicodeBidi: 'isolate',
+                          whiteSpace: 'nowrap',
+                        }}
                       >
                         {formatCurrency(source.amount)}
                       </UnstyledButton>
@@ -161,11 +175,12 @@ export function IncomeSection(): JSX.Element {
               ))}
             </Table.Tbody>
           </Table>
+          </Table.ScrollContainer>
         )}
 
         <Divider color={COLORS.border} />
 
-        <Group justify="space-between" align="center">
+        <Group justify="space-between" align="center" wrap="wrap" gap="sm">
           <Button
             variant="subtle"
             color="emerald"
@@ -175,11 +190,17 @@ export function IncomeSection(): JSX.Element {
           >
             הוסף הכנסה
           </Button>
-          <Box>
+          <Box style={{ minWidth: 0 }}>
             <Text fz="xs" c={COLORS.textSecondary} ta="end">
               סה"כ הכנסות
             </Text>
-            <Text fw={700} fz="lg" c="emerald.6" ta="end">
+            <Text
+              fw={700}
+              fz="lg"
+              c="emerald.6"
+              ta="end"
+              style={{ direction: 'ltr', unicodeBidi: 'isolate', whiteSpace: 'nowrap' }}
+            >
               {formatCurrency(stats.totalIncome)}
             </Text>
           </Box>
