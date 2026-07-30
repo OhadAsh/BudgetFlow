@@ -78,6 +78,19 @@ export function clearStoredDailyInsight(): void {
   localStorage.removeItem(DAILY_INSIGHT_STORAGE_KEY);
 }
 
+/**
+ * Rejects responses that mix in unrelated scripts (CJK, Cyrillic, etc.).
+ * Hebrew, Latin, digits, and common punctuation are allowed.
+ */
+export function isValidHebrewInsight(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 20) return false;
+  const foreignScript =
+    /[\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/;
+  if (foreignScript.test(trimmed)) return false;
+  return /[\u0590-\u05FF]/.test(trimmed);
+}
+
 export function buildDailyPrompt(
   currentMonth: MonthStats,
   topCategory: CategoryBreakdownItem | null,
@@ -87,24 +100,26 @@ export function buildDailyPrompt(
   const topAmount = Math.round(topCategory?.amount ?? 0);
 
   return `
-    אתה יועץ פיננסי ידידותי. תן תובנה יומית קצרה (2-3 משפטים בלבד) 
-    בעברית על ההוצאות של המשתמש.
-    
+    אתה יועץ פיננסי ידידותי. כתוב תובנה יומית קצרה (2-3 משפטים בלבד)
+    בעברית בלבד על ההוצאות של המשתמש.
+
     נתוני החודש הנוכחי:
     - סה"כ הוצאות: ₪${Math.round(currentMonth.totalExpenses)}
     - הקטגוריה הגדולה ביותר: ${topName} (₪${topAmount})
     - אחוז חיסכון: ${Math.round(currentMonth.savingsRate)}%
-    
+
     החודש הקודם לשם השוואה:
     - סה"כ הוצאות: ₪${Math.round(lastMonth.totalExpenses)}
     - אחוז חיסכון: ${Math.round(lastMonth.savingsRate)}%
-    
-    כתוב תובנה אחת קצרה, ספציפית, ומעשית. 
-    לא יותר מ-3 משפטים. בלי כותרות.
+
+    כללים חשובים:
+    - עברית בלבד. אסור להשתמש בסינית, אנגלית, או כל שפה אחרת.
+    - רק אותיות עבריות, מספרים וסימני פיסוק.
+    - תובנה אחת קצרה, ספציפית ומעשית. בלי כותרות ובלי אימוג'ים.
   `.trim();
 }
 
-export async function fetchDailyInsight(
+async function requestOpenRouterInsight(
   apiKey: string,
   prompt: string,
   signal?: AbortSignal
@@ -119,7 +134,8 @@ export async function fetchDailyInsight(
     },
     body: JSON.stringify({
       model: OPENROUTER_MODEL,
-      max_tokens: 200,
+      max_tokens: 300,
+      temperature: 0.5,
       messages: [{ role: 'user', content: prompt }],
     }),
     signal,
@@ -146,10 +162,31 @@ export async function fetchDailyInsight(
     throw new Error(data.error.message);
   }
 
-  const content = data.choices?.[0]?.message?.content?.trim() ?? '';
-  if (!content) {
-    throw new Error('לא התקבלה תובנה מהשרת');
+  return data.choices?.[0]?.message?.content?.trim() ?? '';
+}
+
+export async function fetchDailyInsight(
+  apiKey: string,
+  prompt: string,
+  signal?: AbortSignal
+): Promise<string> {
+  const maxAttempts = 2;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const content = await requestOpenRouterInsight(apiKey, prompt, signal);
+
+    if (!content) {
+      if (attempt < maxAttempts) continue;
+      throw new Error('לא התקבלה תובנה מהשרת');
+    }
+
+    if (!isValidHebrewInsight(content)) {
+      if (attempt < maxAttempts) continue;
+      throw new Error('התובנה שהתקבלה לא תקינה — נסה לרענן');
+    }
+
+    return content;
   }
 
-  return content;
+  throw new Error('לא התקבלה תובנה מהשרת');
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActionIcon,
   Anchor,
@@ -7,12 +7,14 @@ import {
   Group,
   Skeleton,
   Text,
+  Tooltip,
 } from '@mantine/core';
-import { IconSparkles, IconX } from '@tabler/icons-react';
+import { IconRefresh, IconSparkles, IconX } from '@tabler/icons-react';
 import { useMonthData } from '../../hooks/useMonthData';
 import {
   ApiUnauthorizedError,
   buildDailyPrompt,
+  clearStoredDailyInsight,
   fetchDailyInsight,
   formatHebrewInsightDate,
   readStoredDailyInsight,
@@ -44,69 +46,85 @@ export function DailyInsightBubble(): JSX.Element {
 
   const todayLabel = formatHebrewInsightDate();
 
-  useEffect(() => {
-    if (!apiKey) {
-      setInsight(null);
-      setIsLoading(false);
-      setError(null);
-      return;
-    }
-
-    const today = todayISODate();
-    const stored = readStoredDailyInsight();
-    const isStale = !stored || stored.date !== today;
-
-    if (!isStale && stored) {
-      setInsight(stored.insight);
-      setIsLoading(false);
-      setError(null);
-      return;
-    }
-
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setIsLoading(true);
-    setError(null);
-
-    const prompt = buildDailyPrompt(
-      statsRef.current,
-      largestCategoryRef.current,
-      previousStatsRef.current
-    );
-
-    void fetchDailyInsight(apiKey, prompt, controller.signal)
-      .then((text) => {
-        writeStoredDailyInsight(text, today);
-        setInsight(text);
+  const requestInsight = useCallback(
+    (forceRefresh: boolean): void => {
+      if (!apiKey) {
+        setInsight(null);
+        setIsLoading(false);
         setError(null);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof Error && err.name === 'AbortError') return;
-        if (err instanceof ApiUnauthorizedError) {
-          setOpenRouterApiKey(null);
-          setApiKeyError(err.message);
-          setApiKeyOpened(true);
-          setInsight(null);
-          setError(err.message);
+        return;
+      }
+
+      const today = todayISODate();
+
+      if (!forceRefresh) {
+        const stored = readStoredDailyInsight();
+        if (stored && stored.date === today) {
+          setInsight(stored.insight);
+          setIsLoading(false);
+          setError(null);
           return;
         }
-        setError(err instanceof Error ? err.message : 'שגיאה בקבלת התובנה');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setIsLoading(false);
-        }
-      });
+      } else {
+        clearStoredDailyInsight();
+      }
 
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setIsLoading(true);
+      setError(null);
+      if (forceRefresh) {
+        setInsight(null);
+      }
+
+      const prompt = buildDailyPrompt(
+        statsRef.current,
+        largestCategoryRef.current,
+        previousStatsRef.current
+      );
+
+      void fetchDailyInsight(apiKey, prompt, controller.signal)
+        .then((text) => {
+          writeStoredDailyInsight(text, today);
+          setInsight(text);
+          setError(null);
+        })
+        .catch((err: unknown) => {
+          if (err instanceof Error && err.name === 'AbortError') return;
+          if (err instanceof ApiUnauthorizedError) {
+            setOpenRouterApiKey(null);
+            setApiKeyError(err.message);
+            setApiKeyOpened(true);
+            setInsight(null);
+            setError(err.message);
+            return;
+          }
+          setError(err instanceof Error ? err.message : 'שגיאה בקבלת התובנה');
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setIsLoading(false);
+          }
+        });
+    },
+    [apiKey, setOpenRouterApiKey]
+  );
+
+  useEffect(() => {
+    requestInsight(false);
     return () => {
-      controller.abort();
+      abortRef.current?.abort();
     };
-  }, [apiKey, setOpenRouterApiKey]);
+  }, [requestInsight]);
 
   const toggleExpanded = (): void => {
     setExpanded((prev) => !prev);
+  };
+
+  const handleRefresh = (): void => {
+    requestInsight(true);
   };
 
   return (
@@ -141,6 +159,22 @@ export function DailyInsightBubble(): JSX.Element {
                 <Text size="xs" c="dimmed">
                   {todayLabel}
                 </Text>
+                {apiKey ? (
+                  <Tooltip label="תובנה חדשה" withArrow>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      size="sm"
+                      radius="xl"
+                      onClick={handleRefresh}
+                      loading={isLoading}
+                      disabled={isLoading}
+                      aria-label="קבל תובנה חדשה"
+                    >
+                      <IconRefresh size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                ) : null}
                 <ActionIcon
                   variant="subtle"
                   color="gray"
