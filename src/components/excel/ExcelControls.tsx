@@ -25,6 +25,7 @@ import {
   exportToWorkbook,
   parseExcelFile,
 } from '../../lib/excelParser';
+import { applySettingsImport } from '../../lib/settingsImport';
 import { formatCurrency, formatMonthYear } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { ExcelFileDropArea } from './ExcelFileDropArea';
@@ -35,7 +36,10 @@ interface ExcelControlsProps {
 
 export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Element {
   const months = useExpenseStore((state) => state.months);
+  const customCategories = useExpenseStore((state) => state.customCategories);
+  const merchantMemory = useExpenseStore((state) => state.merchantMemory);
   const importFromExcel = useExpenseStore((state) => state.importFromExcel);
+  const applyImportedSettings = useExpenseStore((state) => state.applyImportedSettings);
 
   const [importOpen, setImportOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
@@ -53,11 +57,14 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
     }
 
     try {
-      downloadWorkbook(exportToWorkbook(months), buildExportFileName());
+      downloadWorkbook(
+        exportToWorkbook(months, customCategories, merchantMemory),
+        buildExportFileName()
+      );
       notifications.show({
         color: 'emerald',
         title: 'הייצוא הושלם',
-        message: `נוצר קובץ אקסל עם ${months.length} גיליונות חודשיים.`,
+        message: `נוצר קובץ אקסל עם ${months.length} גיליונות חודשיים ועם הגדרות.`,
       });
     } catch {
       notifications.show({
@@ -101,10 +108,25 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
   const handleConfirmImport = (): void => {
     if (!result) return;
     importFromExcel(result.months);
+
+    if (result.settings !== null) {
+      const applied = applySettingsImport(
+        customCategories,
+        merchantMemory,
+        result.settings,
+        'merge'
+      );
+      applyImportedSettings(applied.customCategories, applied.merchantMemory);
+    }
+
+    const creditTotal = result.preview.reduce((sum, row) => sum + row.creditCount, 0);
+    const creditNote =
+      creditTotal > 0 ? ` כולל ${creditTotal} זיכויים (סכומים שליליים שמקטינים הוצאות).` : '';
+
     notifications.show({
       color: 'emerald',
       title: 'הייבוא הושלם',
-      message: `${result.months.length} חודשים עודכנו מתוך הקובץ.`,
+      message: `${result.months.length} חודשים עודכנו מתוך הקובץ.${creditNote}`,
     });
     closeImport();
   };
@@ -125,6 +147,9 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
       message: 'כל הנתונים המקומיים הוסרו מהדפדפן, כולל מפתח ה-AI.',
     });
   };
+
+  const totalCredits =
+    result?.preview.reduce((sum, row) => sum + row.creditCount, 0) ?? 0;
 
   return (
     <>
@@ -209,6 +234,20 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
               <Text fz="sm" c={COLORS.textSecondary}>
                 נמצאו {result.months.length} חודשים בקובץ. בדוק את הנתונים לפני האישור.
               </Text>
+              {totalCredits > 0 && (
+                <Alert color="blue" title="זיכויים בקובץ">
+                  <Text fz="sm">
+                    {`זוהו ${totalCredits} שורות עם סכום שלילי (זיכויים/החזרים). הן יישמרו ויקטינו את סך ההוצאות — לא יימחקו.`}
+                  </Text>
+                </Alert>
+              )}
+              {result.settings !== null && (
+                <Alert color="gray" title="הגדרות בקובץ">
+                  <Text fz="sm">
+                    {`ייובאו גם ${result.settings.categories.length} קטגוריות מותאמות ו-${result.settings.merchants.length} עסקים בזיכרון (מיזוג עם הקיים).`}
+                  </Text>
+                </Alert>
+              )}
               <Table verticalSpacing="xs" horizontalSpacing="sm" highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
@@ -236,6 +275,11 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
                         <Text fz="sm" c={COLORS.expense}>
                           {formatCurrency(row.totalExpenses)}
                         </Text>
+                        {row.creditCount > 0 && (
+                          <Text fz="xs" c="blue">
+                            {`${row.creditCount} זיכויים`}
+                          </Text>
+                        )}
                       </Table.Td>
                       <Table.Td>
                         <Text fz="sm" c={COLORS.textSecondary}>

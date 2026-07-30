@@ -22,6 +22,7 @@ import {
   formatMonthYear,
   isCategoryType,
   parseAmount,
+  parseSignedAmount,
   toSafeString,
 } from './utils';
 import { sumExpenses, sumIncome } from './calculations';
@@ -49,46 +50,51 @@ export const SETTINGS_EXPORT_FILE_NAME = 'הגדרות-מעקב-הוצאות.xls
 /**
  * Builds a workbook with one sheet per month, each holding an income section
  * followed by an expense section.
+ * When settings are provided, appends custom-category and merchant-memory sheets.
  */
-export function exportToWorkbook(months: MonthData[]): XLSX.WorkBook {
+export function exportToWorkbook(
+  months: MonthData[],
+  customCategories: CustomCategory[] = [],
+  merchantMemory: MerchantMemory = {}
+): XLSX.WorkBook {
   const workbook = XLSX.utils.book_new();
   const ordered = [...months].sort((a, b) => a.year - b.year || a.month - b.month);
 
   if (ordered.length === 0) {
     const empty = XLSX.utils.aoa_to_sheet([[EXCEL_HEADERS.income], [], [EXCEL_HEADERS.expenses]]);
     XLSX.utils.book_append_sheet(workbook, empty, 'ללא נתונים');
-    return workbook;
+  } else {
+    ordered.forEach((month) => {
+      const rows: SheetRow[] = [];
+      const headerRow: SheetRow = [
+        EXCEL_HEADERS.category,
+        EXCEL_HEADERS.description,
+        EXCEL_HEADERS.amount,
+        EXCEL_HEADERS.date,
+      ];
+
+      rows.push([EXCEL_HEADERS.income]);
+      rows.push(headerRow);
+      month.income.forEach((source) => {
+        rows.push(['', source.label, source.amount, '']);
+      });
+      rows.push([EXCEL_HEADERS.total, '', sumIncome(month.income), '']);
+      rows.push([]);
+
+      rows.push([EXCEL_HEADERS.expenses]);
+      rows.push(headerRow);
+      month.expenses.forEach((expense) => {
+        rows.push([expense.category, expense.description, expense.amount, expense.date ?? '']);
+      });
+      rows.push([EXCEL_HEADERS.total, '', sumExpenses(month.expenses), '']);
+
+      const sheet = XLSX.utils.aoa_to_sheet(rows);
+      sheet['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 12 }, { wch: 14 }];
+      XLSX.utils.book_append_sheet(workbook, sheet, buildSheetName(month.year, month.month));
+    });
   }
 
-  ordered.forEach((month) => {
-    const rows: SheetRow[] = [];
-    const headerRow: SheetRow = [
-      EXCEL_HEADERS.category,
-      EXCEL_HEADERS.description,
-      EXCEL_HEADERS.amount,
-      EXCEL_HEADERS.date,
-    ];
-
-    rows.push([EXCEL_HEADERS.income]);
-    rows.push(headerRow);
-    month.income.forEach((source) => {
-      rows.push(['', source.label, source.amount, '']);
-    });
-    rows.push([EXCEL_HEADERS.total, '', sumIncome(month.income), '']);
-    rows.push([]);
-
-    rows.push([EXCEL_HEADERS.expenses]);
-    rows.push(headerRow);
-    month.expenses.forEach((expense) => {
-      rows.push([expense.category, expense.description, expense.amount, expense.date ?? '']);
-    });
-    rows.push([EXCEL_HEADERS.total, '', sumExpenses(month.expenses), '']);
-
-    const sheet = XLSX.utils.aoa_to_sheet(rows);
-    sheet['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 12 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(workbook, sheet, buildSheetName(month.year, month.month));
-  });
-
+  appendSettingsSheets(workbook, customCategories, merchantMemory);
   return workbook;
 }
 
@@ -98,13 +104,18 @@ export function appendSettingsSheets(
   customCategories: CustomCategory[],
   merchantMemory: MerchantMemory
 ): void {
-  const categoriesSheet = XLSX.utils.aoa_to_sheet(buildCategoriesSheetRows(customCategories));
-  categoriesSheet['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 12 }];
-  XLSX.utils.book_append_sheet(workbook, categoriesSheet, SETTINGS_SHEET_NAMES.categories);
-
-  const merchantsSheet = XLSX.utils.aoa_to_sheet(buildMerchantsSheetRows(merchantMemory));
-  merchantsSheet['!cols'] = [{ wch: 28 }, { wch: 16 }];
-  XLSX.utils.book_append_sheet(workbook, merchantsSheet, SETTINGS_SHEET_NAMES.merchants);
+  // Avoid duplicate sheet names when re-appending to a backup workbook.
+  const existing = new Set(workbook.SheetNames.map((name) => normalizeSpaces(name)));
+  if (!existing.has(SETTINGS_SHEET_NAMES.categories)) {
+    const categoriesSheet = XLSX.utils.aoa_to_sheet(buildCategoriesSheetRows(customCategories));
+    categoriesSheet['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(workbook, categoriesSheet, SETTINGS_SHEET_NAMES.categories);
+  }
+  if (!existing.has(SETTINGS_SHEET_NAMES.merchants)) {
+    const merchantsSheet = XLSX.utils.aoa_to_sheet(buildMerchantsSheetRows(merchantMemory));
+    merchantsSheet['!cols'] = [{ wch: 28 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(workbook, merchantsSheet, SETTINGS_SHEET_NAMES.merchants);
+  }
 }
 
 /**
@@ -116,10 +127,7 @@ export function exportBackupWorkbook(
   customCategories: CustomCategory[],
   merchantMemory: MerchantMemory
 ): XLSX.WorkBook {
-  const workbook =
-    months.length > 0 ? exportToWorkbook(months) : XLSX.utils.book_new();
-  appendSettingsSheets(workbook, customCategories, merchantMemory);
-  return workbook;
+  return exportToWorkbook(months, customCategories, merchantMemory);
 }
 
 /** Settings-only workbook (categories + merchant memory) for device transfer. */
@@ -154,37 +162,15 @@ function buildMerchantsSheetRows(merchantMemory: MerchantMemory): SheetRow[] {
 export async function parseSettingsFile(file: File): Promise<SettingsParseResult> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+  const settings = extractSettingsFromWorkbook(workbook);
 
-  const categories: SettingsImportCategory[] = [];
-  const merchants: SettingsImportMerchant[] = [];
-
-  workbook.SheetNames.forEach((sheetName) => {
-    const sheet = workbook.Sheets[sheetName];
-    if (!sheet) return;
-
-    const rows = XLSX.utils.sheet_to_json<SheetRow>(sheet, {
-      header: 1,
-      blankrows: false,
-      defval: '',
-    });
-
-    const normalizedName = normalizeSpaces(sheetName);
-    if (normalizedName === SETTINGS_SHEET_NAMES.categories) {
-      categories.push(...parseCategoriesSheetRows(rows));
-      return;
-    }
-    if (normalizedName === SETTINGS_SHEET_NAMES.merchants) {
-      merchants.push(...parseMerchantsSheetRows(rows));
-    }
-  });
-
-  if (categories.length === 0 && merchants.length === 0) {
+  if (settings === null) {
     throw new Error(
       `לא נמצאו גיליונות הגדרות בקובץ. ודא שיש גיליון "${SETTINGS_SHEET_NAMES.categories}" או "${SETTINGS_SHEET_NAMES.merchants}".`
     );
   }
 
-  return { categories, merchants };
+  return settings;
 }
 
 function parseCategoriesSheetRows(rows: SheetRow[]): SettingsImportCategory[] {
@@ -312,11 +298,14 @@ export async function parseExcelFile(
     throw new Error('לא נמצאו גיליונות תקינים בקובץ. ודא ששם הגיליון בפורמט "ינואר 2026".');
   }
 
+  const settings = extractSettingsFromWorkbook(workbook);
+
   const preview: ImportPreviewRow[] = months.map((month) => ({
     year: month.year,
     month: month.month,
     incomeCount: month.income.length,
     expenseCount: month.expenses.length,
+    creditCount: month.expenses.filter((expense) => expense.amount < 0).length,
     totalIncome: sumIncome(month.income),
     totalExpenses: sumExpenses(month.expenses),
     isReplacing: existingMonths.some(
@@ -324,7 +313,38 @@ export async function parseExcelFile(
     ),
   }));
 
-  return { months, preview, skippedSheets };
+  return { months, preview, skippedSheets, settings };
+}
+
+/** Pulls optional settings sheets out of any workbook (empty arrays when absent). */
+function extractSettingsFromWorkbook(workbook: XLSX.WorkBook): SettingsParseResult | null {
+  const categories: SettingsImportCategory[] = [];
+  const merchants: SettingsImportMerchant[] = [];
+
+  workbook.SheetNames.forEach((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) return;
+
+    const rows = XLSX.utils.sheet_to_json<SheetRow>(sheet, {
+      header: 1,
+      blankrows: false,
+      defval: '',
+    });
+
+    const normalizedName = normalizeSpaces(sheetName);
+    if (normalizedName === SETTINGS_SHEET_NAMES.categories) {
+      categories.push(...parseCategoriesSheetRows(rows));
+      return;
+    }
+    if (normalizedName === SETTINGS_SHEET_NAMES.merchants) {
+      merchants.push(...parseMerchantsSheetRows(rows));
+    }
+  });
+
+  if (categories.length === 0 && merchants.length === 0) {
+    return null;
+  }
+  return { categories, merchants };
 }
 
 type Section = 'none' | 'income' | 'expenses';
@@ -355,10 +375,9 @@ function parseSheetRows(rows: SheetRow[], year: number, month: number): MonthDat
       return;
     }
 
-    const amount = parseAmount(third);
-    if (amount <= 0) return;
-
     if (section === 'income') {
+      const amount = parseAmount(third);
+      if (amount <= 0) return;
       income.push({
         id: crypto.randomUUID(),
         label: second || first || 'הכנסה',
@@ -368,6 +387,9 @@ function parseSheetRows(rows: SheetRow[], year: number, month: number): MonthDat
     }
 
     if (section === 'expenses') {
+      // Keep refunds/credits as negative amounts — do not abs or drop them.
+      const amount = parseSignedAmount(third);
+      if (amount === 0) return;
       expenses.push(buildExpense(first, second, amount, fourth));
     }
   });

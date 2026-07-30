@@ -98,6 +98,8 @@ export interface ImportPreviewRow {
   month: number;
   incomeCount: number;
   expenseCount: number;
+  /** Number of expense rows with a negative amount (card refunds / credits). */
+  creditCount: number;
   totalIncome: number;
   totalExpenses: number;
   isReplacing: boolean;
@@ -107,6 +109,8 @@ export interface ExcelParseResult {
   months: MonthData[];
   preview: ImportPreviewRow[];
   skippedSheets: string[];
+  /** Present when the workbook also carries settings sheets. */
+  settings: SettingsParseResult | null;
 }
 
 /** One custom category row from a settings Excel sheet (no id yet). */

@@ -181,7 +181,11 @@ export function getAnnualStats(months: MonthData[], year: number): AnnualStats {
 /** Sorted descending years that have data, always including the current year. */
 export function getAvailableYears(months: MonthData[], fallbackYear: number): number[] {
   const years = new Set<number>([fallbackYear]);
-  months.forEach((month) => years.add(month.year));
+  months.forEach((month) => {
+    if (month.income.length > 0 || month.expenses.length > 0) {
+      years.add(month.year);
+    }
+  });
   return Array.from(years).sort((a, b) => b - a);
 }
 

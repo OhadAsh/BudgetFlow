@@ -31,6 +31,8 @@ interface ExpenseState {
   forgetMerchant: (merchant: string) => void;
   /** Applies merchant-memory categories to every matching expense across all months. */
   applyMerchantMemoryToAllExpenses: () => number;
+  /** Removes every month belonging to the given year. */
+  deleteYear: (year: number) => void;
 
   /** Replaces custom categories + merchant memory in one shot (settings import). */
   applyImportedSettings: (
@@ -68,6 +70,26 @@ function sortMonths(months: MonthData[]): MonthData[] {
 
 function hasEntries(month: MonthData): boolean {
   return month.income.length > 0 || month.expenses.length > 0;
+}
+
+/** Drops month shells that no longer hold income or expenses. */
+function pruneEmptyMonths(months: MonthData[]): MonthData[] {
+  return months.filter(hasEntries);
+}
+
+/**
+ * If the selected year no longer has data (and is not the calendar year),
+ * jump to the latest year that does — or the current calendar year.
+ */
+function resolveSelectedYear(months: MonthData[], selectedYear: number): number {
+  const calendarYear = currentYear();
+  if (selectedYear === calendarYear) return selectedYear;
+  const stillHasData = months.some((entry) => entry.year === selectedYear && hasEntries(entry));
+  if (stillHasData) return selectedYear;
+
+  const withData = months.filter(hasEntries);
+  if (withData.length === 0) return calendarYear;
+  return withData.reduce((best, entry) => (entry.year > best ? entry.year : best), withData[0].year);
 }
 
 /**
@@ -131,12 +153,18 @@ export const useExpenseStore = create<ExpenseState>()(
         })),
 
       removeExpense: (year, month, id) =>
-        set((state) => ({
-          months: withMonth(state.months, year, month, (target) => ({
-            ...target,
-            expenses: target.expenses.filter((expense) => expense.id !== id),
-          })),
-        })),
+        set((state) => {
+          const months = pruneEmptyMonths(
+            withMonth(state.months, year, month, (target) => ({
+              ...target,
+              expenses: target.expenses.filter((expense) => expense.id !== id),
+            }))
+          );
+          return {
+            months,
+            selectedYear: resolveSelectedYear(months, state.selectedYear),
+          };
+        }),
 
       addIncome: (year, month, source) =>
         set((state) => ({
@@ -157,12 +185,18 @@ export const useExpenseStore = create<ExpenseState>()(
         })),
 
       removeIncome: (year, month, id) =>
-        set((state) => ({
-          months: withMonth(state.months, year, month, (target) => ({
-            ...target,
-            income: target.income.filter((source) => source.id !== id),
-          })),
-        })),
+        set((state) => {
+          const months = pruneEmptyMonths(
+            withMonth(state.months, year, month, (target) => ({
+              ...target,
+              income: target.income.filter((source) => source.id !== id),
+            }))
+          );
+          return {
+            months,
+            selectedYear: resolveSelectedYear(months, state.selectedYear),
+          };
+        }),
 
       addCustomCategory: (cat) =>
         set((state) => ({
@@ -173,18 +207,46 @@ export const useExpenseStore = create<ExpenseState>()(
         })),
 
       updateCustomCategory: (id, patch) =>
-        set((state) => ({
-          customCategories: state.customCategories.map((entry) =>
+        set((state) => {
+          const current = state.customCategories.find((entry) => entry.id === id);
+          if (!current) return state;
+
+          const nextName =
+            patch.name !== undefined ? patch.name.trim() : current.name;
+          const renamed = nextName !== current.name && nextName.length > 0;
+
+          const customCategories = state.customCategories.map((entry) =>
             entry.id === id
               ? {
                   ...entry,
                   ...patch,
                   id: entry.id,
-                  name: patch.name !== undefined ? patch.name.trim() : entry.name,
+                  name: nextName,
                 }
               : entry
-          ),
-        })),
+          );
+
+          if (!renamed) {
+            return { customCategories };
+          }
+
+          // Keep expense rows and merchant memory pointing at the new label.
+          const months = state.months.map((month) => ({
+            ...month,
+            expenses: month.expenses.map((expense) =>
+              expense.category === current.name
+                ? { ...expense, category: nextName }
+                : expense
+            ),
+          }));
+
+          const merchantMemory: MerchantMemory = {};
+          Object.entries(state.merchantMemory).forEach(([merchant, category]) => {
+            merchantMemory[merchant] = category === current.name ? nextName : category;
+          });
+
+          return { customCategories, months, merchantMemory };
+        }),
 
       removeCustomCategory: (id) =>
         set((state) => ({
@@ -219,6 +281,15 @@ export const useExpenseStore = create<ExpenseState>()(
         return updatedCount;
       },
 
+      deleteYear: (year) =>
+        set((state) => {
+          const months = state.months.filter((entry) => entry.year !== year);
+          return {
+            months,
+            selectedYear: resolveSelectedYear(months, state.selectedYear),
+          };
+        }),
+
       applyImportedSettings: (customCategories, merchantMemory) =>
         set({ customCategories, merchantMemory }),
 
@@ -245,11 +316,19 @@ export const useExpenseStore = create<ExpenseState>()(
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      version: 2,
+      version: 3,
       migrate: (persisted) => {
         const state = (persisted ?? {}) as Record<string, unknown>;
+        const rawMonths = Array.isArray(state.months) ? (state.months as MonthData[]) : [];
+        const months = pruneEmptyMonths(rawMonths);
+        const selectedYear =
+          typeof state.selectedYear === 'number'
+            ? resolveSelectedYear(months, state.selectedYear)
+            : currentYear();
         return {
           ...state,
+          months,
+          selectedYear,
           customCategories: Array.isArray(state.customCategories) ? state.customCategories : [],
           merchantMemory:
             state.merchantMemory !== null &&

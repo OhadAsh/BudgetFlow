@@ -1,14 +1,19 @@
+import { useState } from 'react';
 import {
+  ActionIcon,
   Badge,
+  Button,
   Card,
   Group,
+  Modal,
   SimpleGrid,
   Stack,
   Table,
   Text,
   UnstyledButton,
 } from '@mantine/core';
-import { IconMoodSad, IconTrophy } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
+import { IconMoodSad, IconTrash, IconTrophy } from '@tabler/icons-react';
 import { BIG_NUMBER_STYLE, COLORS, SECTION_TITLE_STYLE } from '../../lib/constants';
 import {
   formatCurrency,
@@ -49,16 +54,67 @@ function StatCard({ title, value, color, hint }: StatCardProps): JSX.Element {
 export function AnnualSummary(): JSX.Element {
   const { annualStats, monthlySeries, year, month } = useMonthData();
   const setSelectedPeriod = useExpenseStore((state) => state.setSelectedPeriod);
+  const deleteYear = useExpenseStore((state) => state.deleteYear);
+  const months = useExpenseStore((state) => state.months);
+  const [confirmDeleteYear, setConfirmDeleteYear] = useState<boolean>(false);
 
   const activeMonths = monthlySeries.filter((point) => point.hasData).length;
   const annualRate = calcSavingsRate(annualStats.totalSaved, annualStats.totalIncome);
+  const yearHasAnyData = months.some(
+    (entry) => entry.year === year && (entry.income.length > 0 || entry.expenses.length > 0)
+  );
+
+  const handleDeleteYear = (): void => {
+    deleteYear(year);
+    setConfirmDeleteYear(false);
+    notifications.show({
+      color: 'red',
+      title: 'השנה נמחקה',
+      message: `כל הנתונים של ${year} הוסרו.`,
+    });
+  };
 
   return (
     <Stack gap="md">
       <Group justify="space-between" align="center">
         <Text style={SECTION_TITLE_STYLE}>📅 סיכום שנתי</Text>
-        <YearSelector />
+        <Group gap="xs">
+          <YearSelector />
+          <ActionIcon
+            variant="subtle"
+            color="red"
+            radius="xl"
+            size="lg"
+            disabled={!yearHasAnyData}
+            aria-label={`מחיקת שנת ${year}`}
+            onClick={() => setConfirmDeleteYear(true)}
+          >
+            <IconTrash size={18} />
+          </ActionIcon>
+        </Group>
       </Group>
+
+      <Modal
+        opened={confirmDeleteYear}
+        onClose={() => setConfirmDeleteYear(false)}
+        title={`מחיקת שנת ${year}`}
+        centered
+        size="sm"
+      >
+        <Stack gap="md">
+          <Text fz="sm">
+            {`למחוק את כל ההכנסות וההוצאות של ${year}? לא ניתן לשחזר את הפעולה.`}
+          </Text>
+          <Group grow>
+            <Button variant="default" radius="xl" onClick={() => setConfirmDeleteYear(false)}>
+              ביטול
+            </Button>
+            <Button color="red" radius="xl" onClick={handleDeleteYear}>
+              מחק שנה
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} spacing="md">
         <StatCard

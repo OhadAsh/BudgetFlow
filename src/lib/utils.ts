@@ -234,13 +234,35 @@ export function getAmountColor(value: number): string {
 
 /** Parses free text / Excel cell values into a non-negative number. */
 export function parseAmount(value: unknown): number {
+  return Math.abs(parseSignedAmount(value));
+}
+
+/**
+ * Parses free text / Excel cell values while preserving sign.
+ * Supports leading minus, trailing minus (1,234-), and accounting parentheses (1,234).
+ */
+export function parseSignedAmount(value: unknown): number {
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? Math.abs(value) : 0;
+    return Number.isFinite(value) ? value : 0;
   }
   if (typeof value === 'string') {
-    const cleaned = value.replace(/[^\d.,-]/g, '').replace(/,/g, '');
+    const text = value.trim();
+    if (text.length === 0) return 0;
+
+    const parenMatch = text.match(/^\((.*)\)$/);
+    const isParenNegative = parenMatch !== null;
+    const body = parenMatch ? parenMatch[1] : text;
+    const isTrailingMinus = !isParenNegative && /-$/.test(body);
+    const cleaned = body.replace(/[^\d.,-]/g, '').replace(/,/g, '').replace(/-/g, '');
+    if (cleaned.length === 0) return 0;
+
     const parsed = Number.parseFloat(cleaned);
-    return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
+    if (!Number.isFinite(parsed)) return 0;
+
+    if (isParenNegative || isTrailingMinus || /^\s*-/.test(text)) {
+      return -Math.abs(parsed);
+    }
+    return parsed;
   }
   return 0;
 }
