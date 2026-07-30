@@ -40,6 +40,10 @@ export interface IncomeSource {
   id: string;
   label: string;
   amount: number;
+  /** ISO date when imported from a bank statement (used for dedup). */
+  date?: string;
+  /** Fingerprint of an imported bank credit, used to detect re-imports. */
+  hash?: string;
 }
 
 export interface MonthData {

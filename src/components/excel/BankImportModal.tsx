@@ -31,7 +31,10 @@ import type {
 import { COLORS } from '../../lib/constants';
 import {
   UNKNOWN_FORMAT_ERROR,
+  buildIncomeFingerprint,
   collectImportedHashes,
+  collectImportedIncomeFingerprints,
+  isBankIncomeDuplicate,
   mergeBankIncomeResults,
   mergeCardImportResults,
   parseBankIncomeFile,
@@ -152,6 +155,10 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   );
 
   const existingHashes = useMemo(() => collectImportedHashes(months), [months]);
+  const existingIncomeFingerprints = useMemo(
+    () => collectImportedIncomeFingerprints(months),
+    [months]
+  );
 
   const duplicateIds = useMemo(() => {
     const ids = new Set<string>();
@@ -172,6 +179,16 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     });
     return ids;
   }, [bankResult, existingHashes]);
+
+  const bankIncomeDuplicateIds = useMemo(() => {
+    const ids = new Set<string>();
+    (bankResult?.incomes ?? []).forEach((income) => {
+      if (isBankIncomeDuplicate(income, existingIncomeFingerprints, months)) {
+        ids.add(income.id);
+      }
+    });
+    return ids;
+  }, [bankResult, existingIncomeFingerprints, months]);
 
   const pendingCount =
     cardResult?.transactions.filter((transaction) => transaction.isPending).length ?? 0;
@@ -207,8 +224,11 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   }, [cardResult, searchQuery]);
 
   const checkedIncomes = useMemo(() => {
-    return (bankResult?.incomes ?? []).filter((income) => uncheckedIncome[income.id] !== true);
-  }, [bankResult, uncheckedIncome]);
+    return (bankResult?.incomes ?? []).filter(
+      (income) =>
+        uncheckedIncome[income.id] !== true && !bankIncomeDuplicateIds.has(income.id)
+    );
+  }, [bankResult, uncheckedIncome, bankIncomeDuplicateIds]);
 
   const checkedBankExpenses = useMemo(() => {
     return (bankResult?.expenses ?? []).filter(
@@ -443,6 +463,8 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
       addIncome(period.year, period.month, {
         label: income.label,
         amount: income.amount,
+        date: income.date.length > 0 ? income.date : undefined,
+        hash: buildIncomeFingerprint(income.date, income.description, income.amount),
       });
       monthsTouched.add(`${period.year}-${period.month.toString().padStart(2, '0')}`);
     });
@@ -969,6 +991,9 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                 <Stack gap="xs">
                   <Text fw={700} fz="sm" c={COLORS.textPrimary}>
                     {`הכנסות (זכות) · ${checkedIncomes.length}/${bankResult.incomes.length}`}
+                    {bankIncomeDuplicateIds.size > 0
+                      ? ` · ${bankIncomeDuplicateIds.size} כפילויות`
+                      : ''}
                   </Text>
                   <Table.ScrollContainer minWidth={640} mah={220} type="native">
                     <Table verticalSpacing="xs" horizontalSpacing="sm" highlightOnHover stickyHeader>
@@ -992,15 +1017,21 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                           </Table.Tr>
                         ) : (
                           filteredIncomes.map((income) => {
-                            const isChecked = uncheckedIncome[income.id] !== true;
+                            const isDuplicate = bankIncomeDuplicateIds.has(income.id);
+                            const isChecked =
+                              uncheckedIncome[income.id] !== true && !isDuplicate;
 
                             return (
-                              <Table.Tr key={income.id} style={{ opacity: isChecked ? 1 : 0.45 }}>
+                              <Table.Tr
+                                key={income.id}
+                                style={{ opacity: isChecked && !isDuplicate ? 1 : 0.45 }}
+                              >
                                 <Table.Td>
                                   <Checkbox
                                     size="xs"
                                     color="emerald"
                                     checked={isChecked}
+                                    disabled={isDuplicate}
                                     aria-label={`ייבוא ${income.description}`}
                                     onChange={(event) =>
                                       setUncheckedIncome((current) => ({
@@ -1020,7 +1051,12 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                                     <Text fz="sm" c={COLORS.textPrimary}>
                                       {income.description}
                                     </Text>
-                                    {income.needsReview && (
+                                    {isDuplicate && (
+                                      <Badge size="xs" color="gray" variant="light" radius="sm">
+                                        כבר קיים
+                                      </Badge>
+                                    )}
+                                    {!isDuplicate && income.needsReview && (
                                       <Badge size="xs" color="yellow" variant="light" radius="sm">
                                         ⚠️ בדוק ידנית
                                       </Badge>

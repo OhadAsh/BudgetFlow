@@ -76,7 +76,7 @@ export function exportToWorkbook(
       rows.push([EXCEL_HEADERS.income]);
       rows.push(headerRow);
       month.income.forEach((source) => {
-        rows.push(['', source.label, source.amount, '']);
+        rows.push(['', source.label, source.amount, source.date ?? '']);
       });
       rows.push([EXCEL_HEADERS.total, '', sumIncome(month.income), '']);
       rows.push([]);
@@ -378,11 +378,17 @@ function parseSheetRows(rows: SheetRow[], year: number, month: number): MonthDat
     if (section === 'income') {
       const amount = parseAmount(third);
       if (amount <= 0) return;
-      income.push({
+      const label = second || first || 'הכנסה';
+      const entry: IncomeSource = {
         id: crypto.randomUUID(),
-        label: second || first || 'הכנסה',
+        label,
         amount,
-      });
+      };
+      if (fourth) {
+        entry.date = fourth;
+        entry.hash = buildIncomeFingerprint(fourth, label, amount);
+      }
+      income.push(entry);
       return;
     }
 
@@ -404,14 +410,17 @@ function buildExpense(
   date: string
 ): Expense {
   const category: CategoryType = isCategoryType(rawCategory) ? rawCategory : 'אחר';
+  const resolvedDescription = description || rawCategory || 'הוצאה';
   const expense: Expense = {
     id: crypto.randomUUID(),
     category,
-    description: description || rawCategory || 'הוצאה',
+    description: resolvedDescription,
     amount,
   };
   if (date) {
     expense.date = date;
+    // Rebuild fingerprint so card/bank re-imports still detect Excel round-trips.
+    expense.hash = buildTransactionHash(date, resolvedDescription, amount);
   }
   return expense;
 }
@@ -1454,9 +1463,59 @@ export function mergeCardImportResults(results: BankImportResult[]): BankImportR
   return merged;
 }
 
-/** Fingerprint for deduping income rows across statement files. */
-function buildIncomeFingerprint(income: BankIncomeTransaction): string {
-  return `${income.date}|${income.description}|${income.amount}`;
+/** Fingerprint for deduping income rows across statement files and re-imports. */
+export function buildIncomeFingerprint(
+  date: string,
+  descriptionOrLabel: string,
+  amount: number
+): string {
+  return `${date}|${descriptionOrLabel.trim()}|${amount}`;
+}
+
+/** Fingerprints of incomes already stored, so a re-imported bank statement can be flagged. */
+export function collectImportedIncomeFingerprints(months: MonthData[]): Set<string> {
+  const keys = new Set<string>();
+  months.forEach((month) => {
+    month.income.forEach((entry) => {
+      if (entry.hash) {
+        keys.add(entry.hash);
+      }
+      if (entry.date) {
+        keys.add(buildIncomeFingerprint(entry.date, entry.label, entry.amount));
+      }
+    });
+  });
+  return keys;
+}
+
+/** True when a bank income row matches something already in the store. */
+export function isBankIncomeDuplicate(
+  income: BankIncomeTransaction,
+  existingFingerprints: Set<string>,
+  existingMonths: MonthData[] = []
+): boolean {
+  const candidates = [
+    buildIncomeFingerprint(income.date, income.description, income.amount),
+    buildIncomeFingerprint(income.date, income.label, income.amount),
+  ];
+  if (candidates.some((key) => existingFingerprints.has(key))) {
+    return true;
+  }
+
+  // Legacy rows (before date/hash were stored): same label+amount in the same month.
+  const period = periodFromIsoDate(income.date);
+  if (!period) return false;
+  const month = existingMonths.find(
+    (entry) => entry.year === period.year && entry.month === period.month
+  );
+  if (!month) return false;
+
+  return month.income.some(
+    (entry) =>
+      entry.label === income.label &&
+      entry.amount === income.amount &&
+      (entry.date === undefined || entry.date === income.date)
+  );
 }
 
 /** Merges several Discount statement parses into one preview, dropping exact duplicates. */
@@ -1480,7 +1539,7 @@ export function mergeBankIncomeResults(
 
   results.forEach((result) => {
     result.incomes.forEach((income) => {
-      const key = buildIncomeFingerprint(income);
+      const key = buildIncomeFingerprint(income.date, income.description, income.amount);
       if (seenIncomes.has(key)) return;
       seenIncomes.add(key);
       incomes.push(income);
