@@ -183,7 +183,7 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
               <ExcelFileDropArea
                 loading={loading}
                 title="גרור לכאן קובץ xlsx או לחץ לבחירה"
-                subtitle='שם כל גיליון צריך להיות בפורמט "ינואר 2026". חודש שקיים במערכת יוחלף בנתוני הקובץ.'
+                subtitle='גיליונות חודשיים בשם כמו "ינואר 2026" (או חודש+שנה מזוהים). גיליונות הגדרות נקראים בנפרד. חודש שקיים במערכת יוחלף בנתוני הקובץ.'
                 onFiles={(files) => {
                   const file = files[0];
                   if (file) {
