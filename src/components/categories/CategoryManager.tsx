@@ -7,6 +7,7 @@ import {
   Divider,
   Group,
   Modal,
+  Select,
   SimpleGrid,
   Stack,
   Table,
@@ -34,8 +35,8 @@ import { applySettingsImport } from '../../lib/settingsImport';
 import {
   buildCategorySelectOptions,
   isCategoryNameTaken,
+  isCategoryType,
   matchesSearchQuery,
-  resolveCategoryMeta,
 } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 
@@ -45,7 +46,11 @@ export function CategoryManager(): JSX.Element {
   const addCustomCategory = useExpenseStore((state) => state.addCustomCategory);
   const updateCustomCategory = useExpenseStore((state) => state.updateCustomCategory);
   const removeCustomCategory = useExpenseStore((state) => state.removeCustomCategory);
+  const rememberMerchant = useExpenseStore((state) => state.rememberMerchant);
   const forgetMerchant = useExpenseStore((state) => state.forgetMerchant);
+  const applyMerchantMemoryToAllExpenses = useExpenseStore(
+    (state) => state.applyMerchantMemoryToAllExpenses
+  );
   const applyImportedSettings = useExpenseStore((state) => state.applyImportedSettings);
 
   const [opened, setOpened] = useState<boolean>(false);
@@ -57,6 +62,13 @@ export function CategoryManager(): JSX.Element {
   const [settingsPreview, setSettingsPreview] = useState<SettingsParseResult | null>(null);
   const [importLoading, setImportLoading] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const categoryOptions = useMemo(
+    () => buildCategorySelectOptions(customCategories),
+    [customCategories]
+  );
+
+  const memoryCount = Object.keys(merchantMemory).length;
 
   const memoryRows = useMemo(() => {
     return Object.entries(merchantMemory)
@@ -106,8 +118,29 @@ export function CategoryManager(): JSX.Element {
     setSettingsPreview(null);
   };
 
+  const handleApplyMemoryToAll = (): void => {
+    if (memoryCount === 0) {
+      notifications.show({
+        color: 'yellow',
+        title: 'אין זיכרון עסקים',
+        message: 'שמור קטגוריות לעסקים (בייבוא או בעריכת הוצאה) ואז החל על הכל.',
+      });
+      return;
+    }
+
+    const updatedCount = applyMerchantMemoryToAllExpenses();
+    notifications.show({
+      color: updatedCount > 0 ? 'violet' : 'gray',
+      title: updatedCount > 0 ? 'הקטגוריות עודכנו' : 'אין מה לעדכן',
+      message:
+        updatedCount > 0
+          ? `עודכנו ${updatedCount} הוצאות לפי זיכרון העסקים.`
+          : 'כל ההוצאות כבר תואמות לזיכרון העסקים.',
+    });
+  };
+
   const handleExportSettings = (): void => {
-    if (customCategories.length === 0 && Object.keys(merchantMemory).length === 0) {
+    if (customCategories.length === 0 && memoryCount === 0) {
       notifications.show({
         color: 'yellow',
         title: 'אין הגדרות לייצוא',
@@ -383,9 +416,23 @@ export function CategoryManager(): JSX.Element {
 
           <Tabs.Panel value="memory">
             <Stack gap="md">
-              <Text size="xs" c="dimmed">
-                האפליקציה זוכרת את הקטגוריה שבחרת לכל עסק
-              </Text>
+              <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
+                <Text size="xs" c="dimmed" maw={360}>
+                  האפליקציה זוכרת את הקטגוריה שבחרת לכל עסק. ״החל על הכל״ מרענן את כל ההוצאות
+                  הקיימות לפי הזיכרון.
+                </Text>
+                <Button
+                  size="xs"
+                  radius="xl"
+                  color="violet"
+                  variant="light"
+                  disabled={memoryCount === 0}
+                  onClick={handleApplyMemoryToAll}
+                  aria-label="החל זיכרון עסקים על כל ההוצאות"
+                >
+                  החל על הכל
+                </Button>
+              </Group>
               <TextInput
                 size="xs"
                 radius="xl"
@@ -405,33 +452,33 @@ export function CategoryManager(): JSX.Element {
                     <Table.Thead>
                       <Table.Tr>
                         <Table.Th>שם עסק</Table.Th>
-                        <Table.Th>קטגוריה</Table.Th>
+                        <Table.Th style={{ width: 168 }}>קטגוריה</Table.Th>
                         <Table.Th style={{ width: 44 }} />
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
                       {memoryRows.map((row) => {
-                        const meta = resolveCategoryMeta(row.category, customCategories);
                         return (
                           <Table.Tr key={row.merchant}>
                             <Table.Td>
                               <Text fz="sm">{row.merchant}</Text>
                             </Table.Td>
                             <Table.Td>
-                              <Badge
-                                variant="light"
-                                radius="sm"
-                                styles={{
-                                  root: {
-                                    backgroundColor: `${meta.color}1A`,
-                                    color: meta.color,
-                                    textTransform: 'none',
-                                    fontWeight: 600,
-                                  },
+                              <Select
+                                size="xs"
+                                radius="xl"
+                                aria-label={`קטגוריה ל${row.merchant}`}
+                                data={categoryOptions}
+                                value={row.category}
+                                allowDeselect={false}
+                                withCheckIcon={false}
+                                comboboxProps={{ withinPortal: true }}
+                                onChange={(value) => {
+                                  if (value !== null && isCategoryType(value)) {
+                                    rememberMerchant(row.merchant, value);
+                                  }
                                 }}
-                              >
-                                {`${meta.emoji} ${meta.name}`}
-                              </Badge>
+                              />
                             </Table.Td>
                             <Table.Td>
                               <ActionIcon

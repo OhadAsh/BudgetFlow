@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { CustomCategory, Expense, IncomeSource, MerchantMemory, MonthData } from '../types';
 import { STORAGE_KEY, createSeedMonths } from '../lib/constants';
-import { clampMonth, currentMonth, currentYear, normalizeMerchantName } from '../lib/utils';
+import { applyMerchantMemoryToMonths, clampMonth, currentMonth, currentYear, normalizeMerchantName } from '../lib/utils';
 
 interface ExpenseState {
   months: MonthData[];
@@ -29,6 +29,8 @@ interface ExpenseState {
 
   rememberMerchant: (merchant: string, category: string) => void;
   forgetMerchant: (merchant: string) => void;
+  /** Applies merchant-memory categories to every matching expense across all months. */
+  applyMerchantMemoryToAllExpenses: () => number;
 
   /** Replaces custom categories + merchant memory in one shot (settings import). */
   applyImportedSettings: (
@@ -205,6 +207,16 @@ export const useExpenseStore = create<ExpenseState>()(
           delete next[key];
           return { merchantMemory: next };
         });
+      },
+
+      applyMerchantMemoryToAllExpenses: () => {
+        let updatedCount = 0;
+        set((state) => {
+          const result = applyMerchantMemoryToMonths(state.months, state.merchantMemory);
+          updatedCount = result.updatedCount;
+          return result.updatedCount > 0 ? { months: result.months } : state;
+        });
+        return updatedCount;
       },
 
       applyImportedSettings: (customCategories, merchantMemory) =>

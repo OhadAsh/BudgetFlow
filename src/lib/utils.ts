@@ -1,4 +1,4 @@
-import type { CategoryType, CustomCategory, MerchantMemory } from '../types';
+import type { CategoryType, CustomCategory, MerchantMemory, MonthData } from '../types';
 import {
   BUILT_IN_CATEGORIES,
   CATEGORIES,
@@ -60,6 +60,34 @@ export function lookupMerchant(
     (key) => normalized.includes(key) || key.includes(normalized)
   );
   return match !== undefined ? memory[match] : undefined;
+}
+
+/**
+ * Re-applies merchant memory categories onto every existing expense whose
+ * description matches a remembered merchant. Unchanged rows stay as-is.
+ */
+export function applyMerchantMemoryToMonths(
+  months: MonthData[],
+  memory: MerchantMemory
+): { months: MonthData[]; updatedCount: number } {
+  if (Object.keys(memory).length === 0) {
+    return { months, updatedCount: 0 };
+  }
+
+  let updatedCount = 0;
+  const nextMonths = months.map((month) => ({
+    ...month,
+    expenses: month.expenses.map((expense) => {
+      const remembered = lookupMerchant(memory, expense.description);
+      if (remembered === undefined || remembered === expense.category) {
+        return expense;
+      }
+      updatedCount += 1;
+      return { ...expense, category: remembered };
+    }),
+  }));
+
+  return { months: nextMonths, updatedCount };
 }
 
 export function buildCategorySelectOptions(

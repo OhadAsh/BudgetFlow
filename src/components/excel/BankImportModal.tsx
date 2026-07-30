@@ -46,6 +46,7 @@ import {
   isCreditAmount,
   lookupMerchant,
   matchesSearchQuery,
+  normalizeMerchantName,
 } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { ExcelFileDropArea } from './ExcelFileDropArea';
@@ -104,6 +105,18 @@ function parsePeriodValue(value: string): { year: number; month: number } | null
   return Number.isFinite(year) && Number.isFinite(month) ? { year, month } : null;
 }
 
+/** Same normalized merchant name → apply one category to every matching card row. */
+function matchingMerchantIds(
+  transactions: BankTransaction[],
+  merchant: string
+): string[] {
+  const key = normalizeMerchantName(merchant);
+  if (key.length === 0) return [];
+  return transactions
+    .filter((row) => normalizeMerchantName(row.merchant) === key)
+    .map((row) => row.id);
+}
+
 export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   const months = useExpenseStore((state) => state.months);
   const addExpense = useExpenseStore((state) => state.addExpense);
@@ -129,7 +142,8 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   const [memoryPrompt, setMemoryPrompt] = useState<{
     id: string;
     merchant: string;
-    category: string;
+    category: CategoryType;
+    previousCategory: CategoryType;
   } | null>(null);
 
   const categoryOptions = useMemo(
@@ -481,6 +495,102 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
 
   const hasResult = cardResult !== null || bankResult !== null;
 
+  const memoryMatchCount = useMemo((): number => {
+    if (memoryPrompt === null || cardResult === null) return 0;
+    return matchingMerchantIds(cardResult.transactions, memoryPrompt.merchant).length;
+  }, [memoryPrompt, cardResult]);
+
+  /** Writes category onto matching card rows and keeps overrides in sync. */
+  const refreshCategoriesForMerchant = (
+    merchant: string,
+    category: CategoryType,
+    scope: 'all' | 'one',
+    oneId: string
+  ): void => {
+    const matchIds =
+      scope === 'all'
+        ? matchingMerchantIds(cardResult?.transactions ?? [], merchant)
+        : [oneId];
+    const idSet = new Set(matchIds);
+
+    setCardResult((current) => {
+      if (current === null) return current;
+      return {
+        ...current,
+        transactions: current.transactions.map((row) =>
+          idSet.has(row.id) ? { ...row, category } : row
+        ),
+      };
+    });
+
+    setCategoryOverrides((current) => {
+      const next = { ...current };
+      matchIds.forEach((id) => {
+        next[id] = category;
+      });
+      return next;
+    });
+
+    setMemoryAppliedIds((current) => {
+      const next = new Set(current);
+      matchIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const closeMemoryPrompt = (): void => {
+    setMemoryPrompt(null);
+  };
+
+  const handleApplyCategoryToAll = (): void => {
+    if (memoryPrompt === null) return;
+    rememberMerchant(memoryPrompt.merchant, memoryPrompt.category);
+    refreshCategoriesForMerchant(
+      memoryPrompt.merchant,
+      memoryPrompt.category,
+      'all',
+      memoryPrompt.id
+    );
+    notifications.show({
+      color: 'violet',
+      title: 'הקטגוריה עודכנה',
+      message: `הוחלה על ${memoryMatchCount} עסקאות של ${memoryPrompt.merchant} ונשמרה לזיכרון.`,
+    });
+    closeMemoryPrompt();
+  };
+
+  const handleApplyCategoryToOne = (): void => {
+    if (memoryPrompt === null) return;
+    rememberMerchant(memoryPrompt.merchant, memoryPrompt.category);
+    refreshCategoriesForMerchant(
+      memoryPrompt.merchant,
+      memoryPrompt.category,
+      'one',
+      memoryPrompt.id
+    );
+    closeMemoryPrompt();
+  };
+
+  const handleCancelCategoryChange = (): void => {
+    if (memoryPrompt === null) return;
+    const { id, previousCategory } = memoryPrompt;
+    setCategoryOverrides((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setCardResult((current) => {
+      if (current === null) return current;
+      return {
+        ...current,
+        transactions: current.transactions.map((row) =>
+          row.id === id ? { ...row, category: previousCategory } : row
+        ),
+      };
+    });
+    closeMemoryPrompt();
+  };
+
   const monthSelect = (
     <Select
       size="xs"
@@ -740,6 +850,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                                         id: transaction.id,
                                         merchant: transaction.merchant,
                                         category: value,
+                                        previousCategory: transaction.category,
                                       });
                                     } else {
                                       setMemoryPrompt((current) =>
@@ -749,34 +860,6 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                                   }
                                 }}
                               />
-                              {memoryPrompt?.id === transaction.id && (
-                                <Group gap={6} wrap="wrap">
-                                  <Text fz="xs" c={COLORS.textSecondary}>
-                                    {`לזכור ש${memoryPrompt.merchant} = ${memoryPrompt.category} לפעמים הבאות?`}
-                                  </Text>
-                                  <Button
-                                    size="compact-xs"
-                                    radius="xl"
-                                    color="violet"
-                                    variant="light"
-                                    onClick={() => {
-                                      rememberMerchant(memoryPrompt.merchant, memoryPrompt.category);
-                                      setMemoryAppliedIds((current) => new Set(current).add(transaction.id));
-                                      setMemoryPrompt(null);
-                                    }}
-                                  >
-                                    כן
-                                  </Button>
-                                  <Button
-                                    size="compact-xs"
-                                    radius="xl"
-                                    variant="default"
-                                    onClick={() => setMemoryPrompt(null)}
-                                  >
-                                    לא
-                                  </Button>
-                                </Group>
-                              )}
                             </Stack>
                           </Table.Td>
 
@@ -1107,6 +1190,54 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
               </Group>
             </>
           )}
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={memoryPrompt !== null}
+        onClose={handleCancelCategoryChange}
+        title="החלת קטגוריה"
+        size="sm"
+        centered
+      >
+        <Stack gap="md">
+          <Text fz="sm" c={COLORS.textPrimary}>
+            {memoryPrompt !== null
+              ? `בחרת את הקטגוריה "${memoryPrompt.category}" עבור "${memoryPrompt.merchant}".`
+              : ''}
+          </Text>
+          <Text fz="sm" c={COLORS.textSecondary}>
+            {memoryMatchCount > 1
+              ? `נמצאו ${memoryMatchCount} עסקאות של אותו עסק בקובץ. אפשר להחיל על כולן ולשמור לזיכרון.`
+              : 'אפשר לשמור לזיכרון לפעמים הבאות, או להחיל רק על השורה הזו.'}
+          </Text>
+          <Stack gap="xs">
+            <Button
+              color="violet"
+              radius="xl"
+              fullWidth
+              onClick={handleApplyCategoryToAll}
+              disabled={memoryPrompt === null}
+            >
+              {memoryMatchCount > 1
+                ? `החל על הכל (${memoryMatchCount}) ושמור לזיכרון`
+                : 'החל ושמור לזיכרון'}
+            </Button>
+            {memoryMatchCount > 1 && (
+              <Button
+                variant="light"
+                color="violet"
+                radius="xl"
+                fullWidth
+                onClick={handleApplyCategoryToOne}
+              >
+                רק לשורה זו ושמור לזיכרון
+              </Button>
+            )}
+            <Button variant="default" radius="xl" fullWidth onClick={handleCancelCategoryChange}>
+              ביטול
+            </Button>
+          </Stack>
         </Stack>
       </Modal>
     </>
