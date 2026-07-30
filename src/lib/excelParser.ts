@@ -1059,6 +1059,7 @@ const BANK_FEE_KEYWORDS = ['עמלת', 'עמלה', 'דמי ניהול', 'ריב�
  */
 const BANK_CARD_SETTLEMENT_KEYWORDS = [
   'כאל',
+  'כ.א.ל',
   'מקס',
   'max',
   'ישראכרט',
@@ -1133,9 +1134,21 @@ function mapDiscountColumns(headerRow: SheetRow): DiscountColumns | null {
   return columns;
 }
 
+/**
+ * Strip dots/punctuation so bank labels like "כ.א.ל חיוב" match keywords
+ * such as "כאל" (card settlements must not import as bank expenses).
+ */
+function normalizeForKeywordMatch(value: string): string {
+  return normalizeSpaces(value)
+    .toLowerCase()
+    .replace(/[.\-_/\\'"״׳`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function matchesAnyKeyword(description: string, keywords: string[]): boolean {
-  const normalized = normalizeSpaces(description).toLowerCase();
-  return keywords.some((keyword) => normalized.includes(keyword.toLowerCase()));
+  const normalized = normalizeForKeywordMatch(description);
+  return keywords.some((keyword) => normalized.includes(normalizeForKeywordMatch(keyword)));
 }
 
 /**
