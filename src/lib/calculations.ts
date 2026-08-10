@@ -57,7 +57,10 @@ export function calcNetSaved(totalIncome: number, totalExpenses: number): number
 export function calcSavingsRate(netSaved: number, totalIncome: number): number {
   const income = safeNumber(totalIncome);
   if (income <= 0) return 0;
-  return (safeNumber(netSaved) / income) * 100;
+  const rate = (safeNumber(netSaved) / income) * 100;
+  // Overspending → 0% (not absurd negatives like -32000% on tiny income).
+  if (!Number.isFinite(rate) || rate < 0) return 0;
+  return rate;
 }
 
 export function findMonth(

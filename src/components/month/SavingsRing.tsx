@@ -91,7 +91,7 @@ export function SavingsRing({
           zIndex: 1,
         }}
       >
-        {formatPercent(value)}
+        {formatPercent(clamped)}
       </Text>
     </Box>
   );
