@@ -157,6 +157,8 @@ export interface BankTransaction {
   notes: string;
   /** "תשלום X מתוך Y" when the row is one installment of a plan. */
   installment?: string;
+  /** Statement charge month — used for installment bucketing instead of the purchase date. */
+  chargePeriod?: { year: number; month: number };
   category: CategoryType;
   /** True when "סכום חיוב" is empty — the charge has not happened yet. */
   isPending: boolean;

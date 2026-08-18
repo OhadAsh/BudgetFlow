@@ -31,15 +31,19 @@ import type {
 import { COLORS } from '../../lib/constants';
 import {
   UNKNOWN_FORMAT_ERROR,
+  buildCardImportNote,
   buildIncomeFingerprint,
   collectImportedHashes,
   collectImportedIncomeFingerprints,
+  formatCardTransactionDateLabel,
   isBankIncomeDuplicate,
   mergeBankIncomeResults,
   mergeCardImportResults,
   parseBankIncomeFile,
   parseCardFile,
   periodFromIsoDate,
+  resolveCardExpenseDate,
+  resolveCardTransactionPeriod,
 } from '../../lib/excelParser';
 import {
   buildCategorySelectOptions,
@@ -108,6 +112,22 @@ function parsePeriodValue(value: string): { year: number; month: number } | null
   return Number.isFinite(year) && Number.isFinite(month) ? { year, month } : null;
 }
 
+function savePeriodKey(period: { year: number; month: number }): string {
+  return `${period.year}-${period.month.toString().padStart(2, '0')}`;
+}
+
+function buildSaveMonthOptions(
+  keys: Iterable<string>
+): Array<{ value: string; label: string }> {
+  return Array.from(new Set(keys))
+    .sort()
+    .map((key) => {
+      const parsed = parsePeriodValue(key);
+      return parsed ? { value: key, label: formatMonthYear(parsed.year, parsed.month) } : null;
+    })
+    .filter((item): item is { value: string; label: string } => item !== null);
+}
+
 /** Same normalized merchant name → apply one category to every matching card row. */
 function matchingMerchantIds(
   transactions: BankTransaction[],
@@ -140,6 +160,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   const [uncheckedIncome, setUncheckedIncome] = useState<Record<string, boolean>>({});
   const [uncheckedExpense, setUncheckedExpense] = useState<Record<string, boolean>>({});
   const [targetPeriod, setTargetPeriod] = useState<string>('');
+  const [viewMonthFilter, setViewMonthFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [memoryAppliedIds, setMemoryAppliedIds] = useState<Set<string>>(new Set());
   const [memoryPrompt, setMemoryPrompt] = useState<{
@@ -214,14 +235,44 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
       .reduce((total, transaction) => total + transaction.chargeAmount, 0);
   }, [cardResult, importableIds]);
 
-  const filteredCardTransactions = useMemo(() => {
-    return (cardResult?.transactions ?? []).filter((transaction) =>
-      matchesSearchQuery(
-        `${transaction.merchant} ${transaction.branch} ${transaction.dateLabel}`,
-        searchQuery
-      )
+  const fallbackPeriod = useMemo(() => {
+    if (targetPeriod.length === 0) {
+      return { year: selectedYear, month: selectedMonth };
+    }
+    return parsePeriodValue(targetPeriod) ?? { year: selectedYear, month: selectedMonth };
+  }, [targetPeriod, selectedYear, selectedMonth]);
+
+  const cardDatelessCount = useMemo(() => {
+    return (cardResult?.transactions ?? []).filter((transaction) => transaction.date.length === 0)
+      .length;
+  }, [cardResult]);
+
+  const cardViewMonthOptions = useMemo(() => {
+    const keys = (cardResult?.transactions ?? []).map((transaction) =>
+      savePeriodKey(resolveCardTransactionPeriod(transaction, fallbackPeriod))
     );
-  }, [cardResult, searchQuery]);
+    return [{ value: 'all', label: 'כל החודשים' }, ...buildSaveMonthOptions(keys)];
+  }, [cardResult, fallbackPeriod]);
+
+  const filteredCardTransactions = useMemo(() => {
+    return (cardResult?.transactions ?? []).filter((transaction) => {
+      if (
+        !matchesSearchQuery(
+          `${transaction.merchant} ${transaction.branch} ${transaction.dateLabel}`,
+          searchQuery
+        )
+      ) {
+        return false;
+      }
+      if (viewMonthFilter === 'all') {
+        return true;
+      }
+      return (
+        savePeriodKey(resolveCardTransactionPeriod(transaction, fallbackPeriod)) ===
+        viewMonthFilter
+      );
+    });
+  }, [cardResult, searchQuery, viewMonthFilter, fallbackPeriod]);
 
   const checkedIncomes = useMemo(() => {
     return (bankResult?.incomes ?? []).filter(
@@ -245,23 +296,56 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     return checkedBankExpenses.reduce((total, expense) => total + expense.amount, 0);
   }, [checkedBankExpenses]);
 
+  const bankDatelessCount = useMemo(() => {
+    const rows = [...(bankResult?.incomes ?? []), ...(bankResult?.expenses ?? [])];
+    return rows.filter((row) => row.date.length === 0).length;
+  }, [bankResult]);
+
+  const bankViewMonthOptions = useMemo(() => {
+    const keys = [
+      ...(bankResult?.incomes ?? []).map(
+        (income) => savePeriodKey(periodFromIsoDate(income.date) ?? fallbackPeriod)
+      ),
+      ...(bankResult?.expenses ?? []).map(
+        (expense) => savePeriodKey(periodFromIsoDate(expense.date) ?? fallbackPeriod)
+      ),
+    ];
+    return [{ value: 'all', label: 'כל החודשים' }, ...buildSaveMonthOptions(keys)];
+  }, [bankResult, fallbackPeriod]);
+
   const filteredIncomes = useMemo(() => {
-    return (bankResult?.incomes ?? []).filter((income) =>
-      matchesSearchQuery(
-        `${income.description} ${income.label} ${income.dateLabel}`,
-        searchQuery
-      )
-    );
-  }, [bankResult, searchQuery]);
+    return (bankResult?.incomes ?? []).filter((income) => {
+      if (
+        !matchesSearchQuery(
+          `${income.description} ${income.label} ${income.dateLabel}`,
+          searchQuery
+        )
+      ) {
+        return false;
+      }
+      if (viewMonthFilter === 'all') {
+        return true;
+      }
+      return savePeriodKey(periodFromIsoDate(income.date) ?? fallbackPeriod) === viewMonthFilter;
+    });
+  }, [bankResult, searchQuery, viewMonthFilter, fallbackPeriod]);
 
   const filteredBankExpenses = useMemo(() => {
-    return (bankResult?.expenses ?? []).filter((expense) =>
-      matchesSearchQuery(
-        `${expense.description} ${expense.category} ${expense.dateLabel}`,
-        searchQuery
-      )
-    );
-  }, [bankResult, searchQuery]);
+    return (bankResult?.expenses ?? []).filter((expense) => {
+      if (
+        !matchesSearchQuery(
+          `${expense.description} ${expense.category} ${expense.dateLabel}`,
+          searchQuery
+        )
+      ) {
+        return false;
+      }
+      if (viewMonthFilter === 'all') {
+        return true;
+      }
+      return savePeriodKey(periodFromIsoDate(expense.date) ?? fallbackPeriod) === viewMonthFilter;
+    });
+  }, [bankResult, searchQuery, viewMonthFilter, fallbackPeriod]);
 
   const close = (): void => {
     setOpened(false);
@@ -273,6 +357,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     setUncheckedIncome({});
     setUncheckedExpense({});
     setTargetPeriod('');
+    setViewMonthFilter('all');
     setSearchQuery('');
     setMemoryAppliedIds(new Set());
     setMemoryPrompt(null);
@@ -403,22 +488,16 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
 
     const monthsTouched = new Set<string>();
     rows.forEach((transaction) => {
-      const isCredit = isCreditAmount(transaction.chargeAmount);
-      const noteParts = [
-        isCredit ? 'זיכוי' : null,
-        transaction.installment ?? null,
-      ].filter((part): part is string => part !== null);
-
-      // Bucket by transaction date — never dump everything into the statement charge month.
-      const period = periodFromIsoDate(transaction.date) ?? fallbackPeriod;
+      const period = resolveCardTransactionPeriod(transaction, fallbackPeriod);
+      const expenseDate = resolveCardExpenseDate(transaction);
 
       addExpense(period.year, period.month, {
         category: categoryOverrides[transaction.id] ?? transaction.category,
         description: transaction.merchant,
         // Negative charge amounts are card credits — they reduce the month's expenses.
         amount: transaction.chargeAmount,
-        date: transaction.date.length > 0 ? transaction.date : undefined,
-        note: noteParts.length > 0 ? noteParts.join(' · ') : undefined,
+        date: expenseDate,
+        note: buildCardImportNote(transaction),
         hash: transaction.hash,
       });
       monthsTouched.add(`${period.year}-${period.month.toString().padStart(2, '0')}`);
@@ -613,24 +692,48 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
     closeMemoryPrompt();
   };
 
-  const monthSelect = (
+  const viewMonthFilterSelect = (
     <Select
       size="xs"
-      w={150}
+      w={168}
       radius="xl"
-      aria-label="חודש ברירת מחדל לשורות ללא תאריך"
-      data={monthOptions}
-      value={targetPeriod}
+      label="הצג חודש"
+      aria-label="סינון תצוגה לפי חודש שמירה"
+      data={mode === 'bank' ? bankViewMonthOptions : cardViewMonthOptions}
+      value={viewMonthFilter}
       allowDeselect={false}
       withCheckIcon={false}
       comboboxProps={{ withinPortal: true }}
       onChange={(value) => {
         if (value !== null) {
-          setTargetPeriod(value);
+          setViewMonthFilter(value);
         }
       }}
     />
   );
+
+  const datelessCount = mode === 'bank' ? bankDatelessCount : cardDatelessCount;
+  const fallbackMonthSelect =
+    datelessCount > 0 ? (
+      <Select
+        size="xs"
+        w={168}
+        radius="xl"
+        label="שורות ללא תאריך"
+        description={`${datelessCount} שורות יישמרו בחודש זה`}
+        aria-label="חודש ברירת מחדל לשורות ללא תאריך"
+        data={monthOptions}
+        value={targetPeriod}
+        allowDeselect={false}
+        withCheckIcon={false}
+        comboboxProps={{ withinPortal: true }}
+        onChange={(value) => {
+          if (value !== null) {
+            setTargetPeriod(value);
+          }
+        }}
+      />
+    ) : null;
 
   return (
     <>
@@ -719,25 +822,28 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                         : `גיליון "${cardResult.sheetName}"`}
                   </Text>
                 </Group>
-                {monthSelect}
               </Group>
 
-              <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
-                <Text fz="sm" c={COLORS.textSecondary} maw={520}>
+              <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm">
+                <Text fz="sm" c={COLORS.textSecondary} maw={480}>
                   {`${importableIds.length} עסקאות מוכנות לייבוא, ${pendingCount} בקליטה (ידולגו), ${duplicateIds.size} כפילויות${
                     creditCount > 0 ? `, ${creditCount} זיכויים (מקטינים הוצאות)` : ''
-                  }. כל עסקה תישמר בחודש של התאריך שלה; בחירת החודש משמשת רק לשורות ללא תאריך.`}
+                  }. הייבוא מפזר לחודשים לפי תאריך — תשלומים לפי חודש החיוב.`}
                 </Text>
-                <TextInput
-                  size="xs"
-                  w={220}
-                  radius="xl"
-                  placeholder="חיפוש עסק / ענף / תאריך"
-                  aria-label="חיפוש עסקאות"
-                  leftSection={<IconSearch size={14} />}
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.currentTarget.value)}
-                />
+                <Group align="flex-end" gap="sm" wrap="nowrap">
+                  {viewMonthFilterSelect}
+                  {fallbackMonthSelect}
+                  <TextInput
+                    size="xs"
+                    w={220}
+                    radius="xl"
+                    placeholder="חיפוש עסק / ענף / תאריך"
+                    aria-label="חיפוש עסקאות"
+                    leftSection={<IconSearch size={14} />}
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                  />
+                </Group>
               </Group>
 
               <Table.ScrollContainer minWidth={720} mah={380} type="native">
@@ -764,7 +870,9 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                       <Table.Tr>
                         <Table.Td colSpan={6}>
                           <Text fz="sm" c={COLORS.textSecondary} ta="center" py="md">
-                            לא נמצאו עסקאות מתאימות לחיפוש
+                            {viewMonthFilter === 'all'
+                              ? 'לא נמצאו עסקאות מתאימות לחיפוש'
+                              : 'לא נמצאו עסקאות בחודש זה'}
                           </Text>
                         </Table.Td>
                       </Table.Tr>
@@ -783,7 +891,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                         >
                           <Table.Td>
                             <Text fz="xs" c={COLORS.textSecondary}>
-                              {transaction.dateLabel}
+                              {formatCardTransactionDateLabel(transaction)}
                             </Text>
                           </Table.Td>
 
@@ -968,24 +1076,28 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                       : `גיליון "${bankResult.sheetName}" · ${bankResult.incomes.length} הכנסות · ${(bankResult.expenses ?? []).length} הוצאות`}
                   </Text>
                 </Group>
-                {monthSelect}
               </Group>
 
-              <Text fz="sm" c={COLORS.textSecondary}>
-                כל שורה נשמרת בחודש של התאריך שלה. מיובאים: הו״ק, שיקים יוצאים ומשיכות מזומן. מסוננים: כרטיסי אשראי
-                (כבר ב״ייבוא עסקאות״), ניירות ערך/השקעות, עמלות והעברות בין חשבונות שלך.
-              </Text>
-
-              <TextInput
-                size="xs"
-                w={280}
-                radius="xl"
-                placeholder="חיפוש תיאור / קטגוריה / תאריך"
-                aria-label="חיפוש תנועות בנק"
-                leftSection={<IconSearch size={14} />}
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.currentTarget.value)}
-              />
+              <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm">
+                <Text fz="sm" c={COLORS.textSecondary} maw={480}>
+                  כל שורה נשמרת בחודש של התאריך שלה. מיובאים: הו״ק, שיקים יוצאים ומשיכות מזומן. מסוננים: כרטיסי
+                  אשראי (כבר ב״ייבוא עסקאות״), ניירות ערך/השקעות, עמלות והעברות בין חשבונות שלך.
+                </Text>
+                <Group align="flex-end" gap="sm" wrap="nowrap">
+                  {viewMonthFilterSelect}
+                  {fallbackMonthSelect}
+                  <TextInput
+                    size="xs"
+                    w={220}
+                    radius="xl"
+                    placeholder="חיפוש תיאור / קטגוריה / תאריך"
+                    aria-label="חיפוש תנועות בנק"
+                    leftSection={<IconSearch size={14} />}
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                  />
+                </Group>
+              </Group>
 
               {bankResult.incomes.length > 0 && (
                 <Stack gap="xs">
@@ -1011,7 +1123,9 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                           <Table.Tr>
                             <Table.Td colSpan={5}>
                               <Text fz="sm" c={COLORS.textSecondary} ta="center" py="md">
-                                לא נמצאו הכנסות מתאימות לחיפוש
+                                {viewMonthFilter === 'all'
+                                  ? 'לא נמצאו הכנסות מתאימות לחיפוש'
+                                  : 'לא נמצאו הכנסות בחודש זה'}
                               </Text>
                             </Table.Td>
                           </Table.Tr>
@@ -1104,7 +1218,9 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
                           <Table.Tr>
                             <Table.Td colSpan={5}>
                               <Text fz="sm" c={COLORS.textSecondary} ta="center" py="md">
-                                לא נמצאו הוצאות מתאימות לחיפוש
+                                {viewMonthFilter === 'all'
+                                  ? 'לא נמצאו הוצאות מתאימות לחיפוש'
+                                  : 'לא נמצאו הוצאות בחודש זה'}
                               </Text>
                             </Table.Td>
                           </Table.Tr>

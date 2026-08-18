@@ -680,15 +680,72 @@ export function resolveCalCategory(branch: string, merchant: string): CategoryTy
   return categoryFromBranch(branch) ?? categoryFromMerchant(merchant) ?? 'אחר';
 }
 
-/** Stable fingerprint of a card transaction; base64 of date|merchant|charge. */
+/** Stable fingerprint of a card transaction; base64 of date|merchant|charge|installment. */
 export function buildTransactionHash(
   isoDate: string,
   merchant: string,
-  chargeAmount: number
+  chargeAmount: number,
+  installment?: string,
+  chargePeriod?: { year: number; month: number }
 ): string {
-  const raw = `${isoDate}|${merchant.trim()}|${chargeAmount}`;
+  const dateKey =
+    installment !== undefined && chargePeriod !== undefined
+      ? `${chargePeriod.year}-${chargePeriod.month.toString().padStart(2, '0')}`
+      : isoDate;
+  const installmentKey = installment ?? '';
+  const raw = `${dateKey}|${merchant.trim()}|${chargeAmount}|${installmentKey}`;
   // encodeURIComponent + unescape keeps btoa from choking on Hebrew characters.
   return btoa(unescape(encodeURIComponent(raw)));
+}
+
+/** First day of a month as ISO date — used as the stored date for installment charges. */
+export function periodToIsoDate(period: { year: number; month: number }): string {
+  return `${period.year}-${period.month.toString().padStart(2, '0')}-01`;
+}
+
+/** Month bucket for importing a card row — installments use the statement charge month. */
+export function resolveCardTransactionPeriod(
+  transaction: BankTransaction,
+  fallbackPeriod: { year: number; month: number }
+): { year: number; month: number } {
+  if (transaction.installment !== undefined && transaction.chargePeriod !== undefined) {
+    return transaction.chargePeriod;
+  }
+  return periodFromIsoDate(transaction.date) ?? fallbackPeriod;
+}
+
+/** Stored expense date — installments use the charge month, not the original purchase date. */
+export function resolveCardExpenseDate(transaction: BankTransaction): string | undefined {
+  if (transaction.installment !== undefined && transaction.chargePeriod !== undefined) {
+    return periodToIsoDate(transaction.chargePeriod);
+  }
+  return transaction.date.length > 0 ? transaction.date : undefined;
+}
+
+/** Note shown on imported card expenses — keeps installment marker and original purchase date. */
+export function buildCardImportNote(transaction: BankTransaction): string | undefined {
+  const noteParts: string[] = [];
+  if (transaction.chargeAmount < 0) {
+    noteParts.push('זיכוי');
+  }
+  if (transaction.installment !== undefined) {
+    const purchaseHint =
+      transaction.date.length > 0 ? `רכישה ${transaction.dateLabel}` : null;
+    noteParts.push(
+      purchaseHint !== null
+        ? `${transaction.installment} · ${purchaseHint}`
+        : transaction.installment
+    );
+  }
+  return noteParts.length > 0 ? noteParts.join(' · ') : undefined;
+}
+
+/** Preview label — installments show charge month plus the original purchase date. */
+export function formatCardTransactionDateLabel(transaction: BankTransaction): string {
+  if (transaction.installment !== undefined && transaction.chargePeriod !== undefined) {
+    return `חיוב ${formatMonthYear(transaction.chargePeriod.year, transaction.chargePeriod.month)} · רכישה ${transaction.dateLabel}`;
+  }
+  return transaction.dateLabel;
 }
 
 /** Charge month from the "עסקאות לחיוב ב-..." header line. */
@@ -744,7 +801,10 @@ function isBlankRow(row: SheetRow): boolean {
 }
 
 /** Reads the transaction table out of a Cal sheet. */
-export function parseCalRows(rows: SheetRow[]): BankTransaction[] {
+export function parseCalRows(
+  rows: SheetRow[],
+  chargePeriod: { year: number; month: number } | null = null
+): BankTransaction[] {
   const headerIndex = findCalHeaderRow(rows);
   if (headerIndex === -1) return [];
 
@@ -779,10 +839,19 @@ export function parseCalRows(rows: SheetRow[]): BankTransaction[] {
       notes,
       category: resolveCalCategory(branch, merchant),
       isPending: charge === null,
-      hash: buildTransactionHash(isoDate, merchant, chargeAmount),
+      hash: buildTransactionHash(
+        isoDate,
+        merchant,
+        chargeAmount,
+        installment ?? undefined,
+        installment ? chargePeriod ?? undefined : undefined
+      ),
     };
     if (installment) {
       transaction.installment = installment;
+    }
+    if (chargePeriod) {
+      transaction.chargePeriod = chargePeriod;
     }
 
     transactions.push(transaction);
@@ -807,7 +876,9 @@ export async function parseCalFile(file: File): Promise<BankImportResult> {
     });
     if (!isCalSheet(rows)) continue;
 
-    const transactions = parseCalRows(rows);
+    const headerIndex = findCalHeaderRow(rows);
+    const chargePeriod = findChargePeriod(rows, headerIndex);
+    const transactions = parseCalRows(rows, chargePeriod);
     if (transactions.length === 0) {
       throw new Error('זוהה קובץ כאל אך לא נמצאו בו עסקאות.');
     }
@@ -816,7 +887,7 @@ export async function parseCalFile(file: File): Promise<BankImportResult> {
       source: 'cal',
       sheetName,
       fileCount: 1,
-      chargePeriod: findChargePeriod(rows, findCalHeaderRow(rows)),
+      chargePeriod,
       transactions,
     };
   }
@@ -936,7 +1007,10 @@ function isMaxTotalRow(row: SheetRow): boolean {
 }
 
 /** Reads the transaction table out of a Max sheet. */
-export function parseMaxRows(rows: SheetRow[]): BankTransaction[] {
+export function parseMaxRows(
+  rows: SheetRow[],
+  chargePeriod: { year: number; month: number } | null = null
+): BankTransaction[] {
   const headerIndex = findMaxHeaderRow(rows);
   if (headerIndex === -1) return [];
 
@@ -975,10 +1049,19 @@ export function parseMaxRows(rows: SheetRow[]): BankTransaction[] {
       notes,
       category: resolveMaxCategory(rawCategory),
       isPending: charge === null,
-      hash: buildTransactionHash(isoDate, merchant, chargeAmount),
+      hash: buildTransactionHash(
+        isoDate,
+        merchant,
+        chargeAmount,
+        installment ?? undefined,
+        installment ? chargePeriod ?? undefined : undefined
+      ),
     };
     if (installment) {
       transaction.installment = installment;
+    }
+    if (chargePeriod) {
+      transaction.chargePeriod = chargePeriod;
     }
 
     transactions.push(transaction);
@@ -1007,7 +1090,8 @@ export async function parseCardFile(file: File): Promise<BankImportResult> {
 
     // Max shares the "תאריך עסקה" title with Cal, so its stricter check runs first.
     if (isMaxSheet(rows)) {
-      const transactions = parseMaxRows(rows);
+      const headerIndex = findMaxHeaderRow(rows);
+      const transactions = parseMaxRows(rows, findMaxChargePeriod(rows, headerIndex));
       if (transactions.length === 0) {
         throw new Error('זוהה קובץ מקס אך לא נמצאו בו עסקאות.');
       }
@@ -1015,13 +1099,14 @@ export async function parseCardFile(file: File): Promise<BankImportResult> {
         source: 'max',
         sheetName,
         fileCount: 1,
-        chargePeriod: findMaxChargePeriod(rows, findMaxHeaderRow(rows)),
+        chargePeriod: findMaxChargePeriod(rows, headerIndex),
         transactions,
       };
     }
 
     if (isCalSheet(rows)) {
-      const transactions = parseCalRows(rows);
+      const headerIndex = findCalHeaderRow(rows);
+      const transactions = parseCalRows(rows, findChargePeriod(rows, headerIndex));
       if (transactions.length === 0) {
         throw new Error('זוהה קובץ כאל אך לא נמצאו בו עסקאות.');
       }
@@ -1029,7 +1114,7 @@ export async function parseCardFile(file: File): Promise<BankImportResult> {
         source: 'cal',
         sheetName,
         fileCount: 1,
-        chargePeriod: findChargePeriod(rows, findCalHeaderRow(rows)),
+        chargePeriod: findChargePeriod(rows, headerIndex),
         transactions,
       };
     }
