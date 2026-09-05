@@ -188,9 +188,6 @@ function parseExpense(value: unknown): Expense | null {
   if (value.cardLast4 === null || typeof value.cardLast4 === 'string') {
     expense.cardLast4 = value.cardLast4;
   }
-  if (value.cardBrand === null || typeof value.cardBrand === 'string') {
-    expense.cardBrand = value.cardBrand;
-  }
   return expense;
 }
 
@@ -294,7 +291,7 @@ export async function uploadBackupToDrive(
 ): Promise<DriveFileResource> {
   const jsonBody = JSON.stringify(data);
   const existingId = await findBackupFileId(token);
-  const metadata = existingId
+  const metadata: Record<string, string> = existingId
     ? { mimeType: 'application/json' }
     : { name: DRIVE_BACKUP_FILE_NAME, mimeType: 'application/json' };
 
