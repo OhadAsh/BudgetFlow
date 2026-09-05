@@ -4,7 +4,9 @@ import type {
   BankImportResult,
   BankIncomeImportResult,
   BankIncomeTransaction,
+  BankSource,
   BankTransaction,
+  CategoryTargets,
   CategoryType,
   CustomCategory,
   ExcelParseResult,
@@ -15,6 +17,7 @@ import type {
   MonthData,
   SettingsImportCategory,
   SettingsImportMerchant,
+  SettingsImportTarget,
   SettingsParseResult,
 } from '../types';
 import { COLOR_OPTIONS, EMOJI_OPTIONS, EXCEL_HEADERS, HEBREW_MONTHS } from './constants';
@@ -26,7 +29,15 @@ import {
   toSafeString,
 } from './utils';
 import { sumExpenses, sumIncome } from './calculations';
-
+import {
+  buildLegacyTransactionHash,
+  buildTransactionFingerprint,
+  extractAnyInstallmentMarker,
+  extractCardLast4FromHeaderRows,
+  fingerprintKeysForExpense,
+  fingerprintKeysForInput,
+  normalizeCardLast4,
+} from './transactionIdentity';
 type Cell = string | number | boolean | null | undefined;
 type SheetRow = Cell[];
 
@@ -35,6 +46,7 @@ const SHEET_NAME_LIMIT = 31;
 export const SETTINGS_SHEET_NAMES = {
   categories: 'קטגוריות מותאמות',
   merchants: 'זיכרון עסקים',
+  targets: 'יעדי קטגוריות',
 } as const;
 
 export const SETTINGS_HEADERS = {
@@ -43,6 +55,7 @@ export const SETTINGS_HEADERS = {
   color: 'צבע',
   merchant: 'שם עסק',
   category: 'קטגוריה',
+  monthlyTarget: 'יעד חודשי',
 } as const;
 
 export const SETTINGS_EXPORT_FILE_NAME = 'הגדרות-מעקב-הוצאות.xlsx';
@@ -50,12 +63,13 @@ export const SETTINGS_EXPORT_FILE_NAME = 'הגדרות-מעקב-הוצאות.xls
 /**
  * Builds a workbook with one sheet per month, each holding an income section
  * followed by an expense section.
- * When settings are provided, appends custom-category and merchant-memory sheets.
+ * When settings are provided, appends custom-category, merchant-memory, and target sheets.
  */
 export function exportToWorkbook(
   months: MonthData[],
   customCategories: CustomCategory[] = [],
-  merchantMemory: MerchantMemory = {}
+  merchantMemory: MerchantMemory = {},
+  categoryTargets: CategoryTargets = {}
 ): XLSX.WorkBook {
   const workbook = XLSX.utils.book_new();
   const ordered = [...months].sort((a, b) => a.year - b.year || a.month - b.month);
@@ -66,15 +80,25 @@ export function exportToWorkbook(
   } else {
     ordered.forEach((month) => {
       const rows: SheetRow[] = [];
-      const headerRow: SheetRow = [
+      const incomeHeader: SheetRow = [
         EXCEL_HEADERS.category,
         EXCEL_HEADERS.description,
         EXCEL_HEADERS.amount,
         EXCEL_HEADERS.date,
       ];
+      const expenseHeader: SheetRow = [
+        EXCEL_HEADERS.category,
+        EXCEL_HEADERS.description,
+        EXCEL_HEADERS.amount,
+        EXCEL_HEADERS.date,
+        EXCEL_HEADERS.note,
+        EXCEL_HEADERS.hash,
+        EXCEL_HEADERS.source,
+        EXCEL_HEADERS.cardLast4,
+      ];
 
       rows.push([EXCEL_HEADERS.income]);
-      rows.push(headerRow);
+      rows.push(incomeHeader);
       month.income.forEach((source) => {
         rows.push(['', source.label, source.amount, source.date ?? '']);
       });
@@ -82,27 +106,46 @@ export function exportToWorkbook(
       rows.push([]);
 
       rows.push([EXCEL_HEADERS.expenses]);
-      rows.push(headerRow);
+      rows.push(expenseHeader);
       month.expenses.forEach((expense) => {
-        rows.push([expense.category, expense.description, expense.amount, expense.date ?? '']);
+        rows.push([
+          expense.category,
+          expense.description,
+          expense.amount,
+          expense.date ?? '',
+          expense.note ?? '',
+          expense.hash ?? '',
+          expense.source ?? '',
+          expense.cardLast4 ?? '',
+        ]);
       });
       rows.push([EXCEL_HEADERS.total, '', sumExpenses(month.expenses), '']);
 
       const sheet = XLSX.utils.aoa_to_sheet(rows);
-      sheet['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 12 }, { wch: 14 }];
+      sheet['!cols'] = [
+        { wch: 14 },
+        { wch: 28 },
+        { wch: 12 },
+        { wch: 14 },
+        { wch: 28 },
+        { wch: 24 },
+        { wch: 10 },
+        { wch: 10 },
+      ];
       XLSX.utils.book_append_sheet(workbook, sheet, buildSheetName(month.year, month.month));
     });
   }
 
-  appendSettingsSheets(workbook, customCategories, merchantMemory);
+  appendSettingsSheets(workbook, customCategories, merchantMemory, categoryTargets);
   return workbook;
 }
 
-/** Appends custom-category and merchant-memory sheets to an existing workbook. */
+/** Appends custom-category, merchant-memory, and target sheets to an existing workbook. */
 export function appendSettingsSheets(
   workbook: XLSX.WorkBook,
   customCategories: CustomCategory[],
-  merchantMemory: MerchantMemory
+  merchantMemory: MerchantMemory,
+  categoryTargets: CategoryTargets = {}
 ): void {
   // Avoid duplicate sheet names when re-appending to a backup workbook.
   const existing = new Set(workbook.SheetNames.map((name) => normalizeSpaces(name)));
@@ -116,27 +159,34 @@ export function appendSettingsSheets(
     merchantsSheet['!cols'] = [{ wch: 28 }, { wch: 16 }];
     XLSX.utils.book_append_sheet(workbook, merchantsSheet, SETTINGS_SHEET_NAMES.merchants);
   }
+  if (!existing.has(SETTINGS_SHEET_NAMES.targets)) {
+    const targetsSheet = XLSX.utils.aoa_to_sheet(buildTargetsSheetRows(categoryTargets));
+    targetsSheet['!cols'] = [{ wch: 18 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(workbook, targetsSheet, SETTINGS_SHEET_NAMES.targets);
+  }
 }
 
 /**
  * Full backup before nuclear delete: monthly financial sheets plus settings sheets.
- * When there is no month data, still writes the two settings sheets alone.
+ * When there is no month data, still writes the settings sheets alone.
  */
 export function exportBackupWorkbook(
   months: MonthData[],
   customCategories: CustomCategory[],
-  merchantMemory: MerchantMemory
+  merchantMemory: MerchantMemory,
+  categoryTargets: CategoryTargets = {}
 ): XLSX.WorkBook {
-  return exportToWorkbook(months, customCategories, merchantMemory);
+  return exportToWorkbook(months, customCategories, merchantMemory, categoryTargets);
 }
 
-/** Settings-only workbook (categories + merchant memory) for device transfer. */
+/** Settings-only workbook (categories + merchant memory + targets) for device transfer. */
 export function exportSettingsToWorkbook(
   customCategories: CustomCategory[],
-  merchantMemory: MerchantMemory
+  merchantMemory: MerchantMemory,
+  categoryTargets: CategoryTargets = {}
 ): XLSX.WorkBook {
   const workbook = XLSX.utils.book_new();
-  appendSettingsSheets(workbook, customCategories, merchantMemory);
+  appendSettingsSheets(workbook, customCategories, merchantMemory, categoryTargets);
   return workbook;
 }
 
@@ -154,6 +204,17 @@ function buildMerchantsSheetRows(merchantMemory: MerchantMemory): SheetRow[] {
     .sort(([a], [b]) => a.localeCompare(b, 'he'))
     .forEach(([merchant, category]) => {
       rows.push([merchant, category]);
+    });
+  return rows;
+}
+
+function buildTargetsSheetRows(categoryTargets: CategoryTargets): SheetRow[] {
+  const rows: SheetRow[] = [[SETTINGS_HEADERS.category, SETTINGS_HEADERS.monthlyTarget]];
+  Object.entries(categoryTargets)
+    .filter(([, target]) => typeof target === 'number' && Number.isFinite(target) && target >= 0)
+    .sort(([a], [b]) => a.localeCompare(b, 'he'))
+    .forEach(([category, target]) => {
+      rows.push([category, target]);
     });
   return rows;
 }
@@ -220,6 +281,36 @@ function parseMerchantsSheetRows(rows: SheetRow[]): SettingsImportMerchant[] {
   return result;
 }
 
+function parseTargetsSheetRows(rows: SheetRow[]): SettingsImportTarget[] {
+  const result: SettingsImportTarget[] = [];
+
+  rows.forEach((row, index) => {
+    const category = toSafeString(row[0]).trim();
+    const rawTarget = row[1];
+
+    if (index === 0 && category === SETTINGS_HEADERS.category) {
+      return;
+    }
+    if (category.length === 0) {
+      return;
+    }
+
+    const text = toSafeString(rawTarget).trim();
+    if (text.length === 0) {
+      result.push({ category, monthlyTarget: null });
+      return;
+    }
+
+    const amount = parseAmount(rawTarget);
+    if (!Number.isFinite(amount) || amount < 0) {
+      return;
+    }
+    result.push({ category, monthlyTarget: amount });
+  });
+
+  return result;
+}
+
 export function downloadWorkbook(workbook: XLSX.WorkBook, fileName: string): void {
   XLSX.writeFile(workbook, fileName);
 }
@@ -268,7 +359,8 @@ export async function parseExcelFile(
     const normalizedName = normalizeSpaces(sheetName);
     if (
       normalizedName === SETTINGS_SHEET_NAMES.categories ||
-      normalizedName === SETTINGS_SHEET_NAMES.merchants
+      normalizedName === SETTINGS_SHEET_NAMES.merchants ||
+      normalizedName === SETTINGS_SHEET_NAMES.targets
     ) {
       return;
     }
@@ -320,6 +412,7 @@ export async function parseExcelFile(
 function extractSettingsFromWorkbook(workbook: XLSX.WorkBook): SettingsParseResult | null {
   const categories: SettingsImportCategory[] = [];
   const merchants: SettingsImportMerchant[] = [];
+  const targets: SettingsImportTarget[] = [];
 
   workbook.SheetNames.forEach((sheetName) => {
     const sheet = workbook.Sheets[sheetName];
@@ -338,13 +431,17 @@ function extractSettingsFromWorkbook(workbook: XLSX.WorkBook): SettingsParseResu
     }
     if (normalizedName === SETTINGS_SHEET_NAMES.merchants) {
       merchants.push(...parseMerchantsSheetRows(rows));
+      return;
+    }
+    if (normalizedName === SETTINGS_SHEET_NAMES.targets) {
+      targets.push(...parseTargetsSheetRows(rows));
     }
   });
 
-  if (categories.length === 0 && merchants.length === 0) {
+  if (categories.length === 0 && merchants.length === 0 && targets.length === 0) {
     return null;
   }
-  return { categories, merchants };
+  return { categories, merchants, targets };
 }
 
 type Section = 'none' | 'income' | 'expenses';
@@ -359,6 +456,10 @@ function parseSheetRows(rows: SheetRow[], year: number, month: number): MonthDat
     const second = toSafeString(row[1]);
     const third = row[2];
     const fourth = toSafeString(row[3]);
+    const fifth = toSafeString(row[4]);
+    const sixth = toSafeString(row[5]);
+    const seventh = toSafeString(row[6]);
+    const eighth = toSafeString(row[7]);
 
     if (isSectionHeader(first, EXCEL_HEADERS.income) || isSectionHeader(second, EXCEL_HEADERS.income)) {
       section = 'income';
@@ -396,18 +497,39 @@ function parseSheetRows(rows: SheetRow[], year: number, month: number): MonthDat
       // Keep refunds/credits as negative amounts — do not abs or drop them.
       const amount = parseSignedAmount(third);
       if (amount === 0) return;
-      expenses.push(buildExpense(first, second, amount, fourth));
+      expenses.push(
+        buildExpense(first, second, amount, fourth, {
+          note: fifth.length > 0 ? fifth : undefined,
+          hash: sixth.length > 0 ? sixth : undefined,
+          source: parseBankSource(seventh),
+          cardLast4: normalizeCardLast4(eighth) ?? undefined,
+        })
+      );
     }
   });
 
   return { year, month, income, expenses };
 }
 
+function parseBankSource(value: string): BankSource | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'cal' || normalized === 'max' || normalized === 'discount') {
+    return normalized;
+  }
+  return undefined;
+}
+
 function buildExpense(
   rawCategory: string,
   description: string,
   amount: number,
-  date: string
+  date: string,
+  extras: {
+    note?: string;
+    hash?: string;
+    source?: BankSource;
+    cardLast4?: string;
+  } = {}
 ): Expense {
   const category: CategoryType = isCategoryType(rawCategory) ? rawCategory : 'אחר';
   const resolvedDescription = description || rawCategory || 'הוצאה';
@@ -419,8 +541,31 @@ function buildExpense(
   };
   if (date) {
     expense.date = date;
-    // Rebuild fingerprint so card/bank re-imports still detect Excel round-trips.
-    expense.hash = buildTransactionHash(date, resolvedDescription, amount);
+  }
+  if (extras.note !== undefined) {
+    expense.note = extras.note;
+  }
+  if (extras.source !== undefined) {
+    expense.source = extras.source;
+  }
+  if (extras.cardLast4 !== undefined) {
+    expense.cardLast4 = extras.cardLast4;
+  }
+
+  if (extras.hash !== undefined && extras.hash.length > 0) {
+    expense.hash = extras.hash;
+  } else if (date) {
+    const installment = extractAnyInstallmentMarker(extras.note) ?? undefined;
+    const period = periodFromIsoDate(date);
+    expense.hash = buildTransactionFingerprint({
+      isoDate: date,
+      merchant: resolvedDescription,
+      chargeAmount: amount,
+      installment,
+      chargePeriod: installment !== undefined && period !== null ? period : undefined,
+      source: extras.source ?? null,
+      cardLast4: extras.cardLast4 ?? null,
+    });
   }
   return expense;
 }
@@ -680,22 +825,25 @@ export function resolveCalCategory(branch: string, merchant: string): CategoryTy
   return categoryFromBranch(branch) ?? categoryFromMerchant(merchant) ?? 'אחר';
 }
 
-/** Stable fingerprint of a card transaction; base64 of date|merchant|charge|installment. */
+/** Stable fingerprint of a card transaction; delegates to the identity module. */
 export function buildTransactionHash(
   isoDate: string,
   merchant: string,
   chargeAmount: number,
   installment?: string,
-  chargePeriod?: { year: number; month: number }
+  chargePeriod?: { year: number; month: number },
+  source?: BankSource | null,
+  cardLast4?: string | null
 ): string {
-  const dateKey =
-    installment !== undefined && chargePeriod !== undefined
-      ? `${chargePeriod.year}-${chargePeriod.month.toString().padStart(2, '0')}`
-      : isoDate;
-  const installmentKey = installment ?? '';
-  const raw = `${dateKey}|${merchant.trim()}|${chargeAmount}|${installmentKey}`;
-  // encodeURIComponent + unescape keeps btoa from choking on Hebrew characters.
-  return btoa(unescape(encodeURIComponent(raw)));
+  return buildTransactionFingerprint({
+    isoDate,
+    merchant,
+    chargeAmount,
+    installment,
+    chargePeriod,
+    source,
+    cardLast4,
+  });
 }
 
 /** First day of a month as ISO date — used as the stored date for installment charges. */
@@ -803,7 +951,8 @@ function isBlankRow(row: SheetRow): boolean {
 /** Reads the transaction table out of a Cal sheet. */
 export function parseCalRows(
   rows: SheetRow[],
-  chargePeriod: { year: number; month: number } | null = null
+  chargePeriod: { year: number; month: number } | null = null,
+  sourceMeta: { source: 'cal'; cardLast4?: string } = { source: 'cal' }
 ): BankTransaction[] {
   const headerIndex = findCalHeaderRow(rows);
   if (headerIndex === -1) return [];
@@ -839,12 +988,15 @@ export function parseCalRows(
       notes,
       category: resolveCalCategory(branch, merchant),
       isPending: charge === null,
+      source: sourceMeta.source,
       hash: buildTransactionHash(
         isoDate,
         merchant,
         chargeAmount,
         installment ?? undefined,
-        installment ? chargePeriod ?? undefined : undefined
+        installment ? chargePeriod ?? undefined : undefined,
+        sourceMeta.source,
+        sourceMeta.cardLast4 ?? null
       ),
     };
     if (installment) {
@@ -852,6 +1004,9 @@ export function parseCalRows(
     }
     if (chargePeriod) {
       transaction.chargePeriod = chargePeriod;
+    }
+    if (sourceMeta.cardLast4) {
+      transaction.cardLast4 = sourceMeta.cardLast4;
     }
 
     transactions.push(transaction);
@@ -878,18 +1033,24 @@ export async function parseCalFile(file: File): Promise<BankImportResult> {
 
     const headerIndex = findCalHeaderRow(rows);
     const chargePeriod = findChargePeriod(rows, headerIndex);
-    const transactions = parseCalRows(rows, chargePeriod);
+    const cardLast4 =
+      extractCardLast4FromHeaderRows(rows.slice(0, Math.max(headerIndex, 0))) ?? undefined;
+    const transactions = parseCalRows(rows, chargePeriod, { source: 'cal', cardLast4 });
     if (transactions.length === 0) {
       throw new Error('זוהה קובץ כאל אך לא נמצאו בו עסקאות.');
     }
 
-    return {
+    const result: BankImportResult = {
       source: 'cal',
       sheetName,
       fileCount: 1,
       chargePeriod,
       transactions,
     };
+    if (cardLast4) {
+      result.cardLast4 = cardLast4;
+    }
+    return result;
   }
 
   throw new Error('הקובץ אינו דוח עסקאות של כאל. ודא שהקובץ הורד מאתר כאל ללא שינויים.');
@@ -1009,7 +1170,8 @@ function isMaxTotalRow(row: SheetRow): boolean {
 /** Reads the transaction table out of a Max sheet. */
 export function parseMaxRows(
   rows: SheetRow[],
-  chargePeriod: { year: number; month: number } | null = null
+  chargePeriod: { year: number; month: number } | null = null,
+  sourceMeta: { source: 'max'; cardLast4?: string } = { source: 'max' }
 ): BankTransaction[] {
   const headerIndex = findMaxHeaderRow(rows);
   if (headerIndex === -1) return [];
@@ -1049,12 +1211,15 @@ export function parseMaxRows(
       notes,
       category: resolveMaxCategory(rawCategory),
       isPending: charge === null,
+      source: sourceMeta.source,
       hash: buildTransactionHash(
         isoDate,
         merchant,
         chargeAmount,
         installment ?? undefined,
-        installment ? chargePeriod ?? undefined : undefined
+        installment ? chargePeriod ?? undefined : undefined,
+        sourceMeta.source,
+        sourceMeta.cardLast4 ?? null
       ),
     };
     if (installment) {
@@ -1062,6 +1227,9 @@ export function parseMaxRows(
     }
     if (chargePeriod) {
       transaction.chargePeriod = chargePeriod;
+    }
+    if (sourceMeta.cardLast4) {
+      transaction.cardLast4 = sourceMeta.cardLast4;
     }
 
     transactions.push(transaction);
@@ -1091,32 +1259,46 @@ export async function parseCardFile(file: File): Promise<BankImportResult> {
     // Max shares the "תאריך עסקה" title with Cal, so its stricter check runs first.
     if (isMaxSheet(rows)) {
       const headerIndex = findMaxHeaderRow(rows);
-      const transactions = parseMaxRows(rows, findMaxChargePeriod(rows, headerIndex));
+      const chargePeriod = findMaxChargePeriod(rows, headerIndex);
+      const cardLast4 =
+        extractCardLast4FromHeaderRows(rows.slice(0, Math.max(headerIndex, 0))) ?? undefined;
+      const transactions = parseMaxRows(rows, chargePeriod, { source: 'max', cardLast4 });
       if (transactions.length === 0) {
         throw new Error('זוהה קובץ מקס אך לא נמצאו בו עסקאות.');
       }
-      return {
+      const result: BankImportResult = {
         source: 'max',
         sheetName,
         fileCount: 1,
-        chargePeriod: findMaxChargePeriod(rows, headerIndex),
+        chargePeriod,
         transactions,
       };
+      if (cardLast4) {
+        result.cardLast4 = cardLast4;
+      }
+      return result;
     }
 
     if (isCalSheet(rows)) {
       const headerIndex = findCalHeaderRow(rows);
-      const transactions = parseCalRows(rows, findChargePeriod(rows, headerIndex));
+      const chargePeriod = findChargePeriod(rows, headerIndex);
+      const cardLast4 =
+        extractCardLast4FromHeaderRows(rows.slice(0, Math.max(headerIndex, 0))) ?? undefined;
+      const transactions = parseCalRows(rows, chargePeriod, { source: 'cal', cardLast4 });
       if (transactions.length === 0) {
         throw new Error('זוהה קובץ כאל אך לא נמצאו בו עסקאות.');
       }
-      return {
+      const result: BankImportResult = {
         source: 'cal',
         sheetName,
         fileCount: 1,
-        chargePeriod: findChargePeriod(rows, headerIndex),
+        chargePeriod,
         transactions,
       };
+      if (cardLast4) {
+        result.cardLast4 = cardLast4;
+      }
+      return result;
     }
   }
 
@@ -1475,7 +1657,7 @@ export function parseDiscountExpenseRows(rows: SheetRow[]): BankExpenseTransacti
       description: cleanedDescription,
       amount,
       category: mapBankExpenseCategory(description),
-      hash: buildTransactionHash(isoDate, cleanedDescription, amount),
+      hash: buildTransactionHash(isoDate, cleanedDescription, amount, undefined, undefined, 'discount'),
     });
   });
 
@@ -1512,7 +1694,7 @@ export async function parseBankIncomeFile(file: File): Promise<BankIncomeImportR
   );
 }
 
-/** Merges several card-statement parses into one preview, dropping duplicate hashes. */
+/** Merges several card-statement parses into one preview, dropping duplicate fingerprints. */
 export function mergeCardImportResults(results: BankImportResult[]): BankImportResult {
   if (results.length === 0) {
     throw new Error('לא נמצאו קבצים תקינים לייבוא.');
@@ -1525,7 +1707,17 @@ export function mergeCardImportResults(results: BankImportResult[]): BankImportR
   const transactions: BankTransaction[] = [];
   results.forEach((result) => {
     result.transactions.forEach((transaction) => {
-      if (seenHashes.has(transaction.hash)) return;
+      const keys = fingerprintKeysForInput({
+        isoDate: transaction.date,
+        merchant: transaction.merchant,
+        chargeAmount: transaction.chargeAmount,
+        installment: transaction.installment,
+        chargePeriod: transaction.chargePeriod,
+        source: transaction.source ?? result.source,
+        cardLast4: transaction.cardLast4 ?? result.cardLast4 ?? null,
+      });
+      if (keys.some((key) => seenHashes.has(key))) return;
+      keys.forEach((key) => seenHashes.add(key));
       seenHashes.add(transaction.hash);
       transactions.push(transaction);
     });
@@ -1534,6 +1726,7 @@ export function mergeCardImportResults(results: BankImportResult[]): BankImportR
   const uniqueSources = Array.from(new Set(results.map((result) => result.source)));
   const chargePeriod =
     results.find((result) => result.chargePeriod !== null)?.chargePeriod ?? null;
+  const cardLast4 = results.find((result) => result.cardLast4)?.cardLast4;
 
   const merged: BankImportResult = {
     source: uniqueSources[0],
@@ -1544,6 +1737,9 @@ export function mergeCardImportResults(results: BankImportResult[]): BankImportR
   };
   if (uniqueSources.length > 1) {
     merged.sources = uniqueSources;
+  }
+  if (cardLast4) {
+    merged.cardLast4 = cardLast4;
   }
   return merged;
 }
@@ -1645,17 +1841,16 @@ export function mergeBankIncomeResults(
   };
 }
 
-/** Hashes of expenses already stored, so a re-imported statement can be flagged. */
+/** Fingerprints of expenses already stored, so a re-imported statement can be flagged. */
 export function collectImportedHashes(months: MonthData[]): Set<string> {
   const hashes = new Set<string>();
   months.forEach((month) => {
     month.expenses.forEach((expense) => {
-      if (expense.hash) {
-        hashes.add(expense.hash);
-      } else if (expense.date) {
-        hashes.add(buildTransactionHash(expense.date, expense.description, expense.amount));
-      }
+      fingerprintKeysForExpense(expense).forEach((key) => hashes.add(key));
     });
   });
   return hashes;
 }
+
+/** @deprecated Prefer buildLegacyTransactionHash / buildTransactionFingerprint. */
+export { buildLegacyTransactionHash };

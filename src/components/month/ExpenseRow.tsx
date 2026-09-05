@@ -14,9 +14,11 @@ import {
 import { IconX } from '@tabler/icons-react';
 import type { Expense } from '../../types';
 import { COLORS } from '../../lib/constants';
+import { formatCardSourceLabel } from '../../lib/transactionIdentity';
 import {
   buildCategorySelectOptions,
   formatCurrency,
+  formatDisplayDate,
   isCategoryType,
   isCreditAmount,
   resolveCategoryMeta,
@@ -38,6 +40,7 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
   const customCategories = useExpenseStore((state) => state.customCategories);
   const [editing, setEditing] = useState<EditingField>(null);
   const isCredit = isCreditAmount(expense.amount);
+  const sourceLabel = formatCardSourceLabel(expense.source, expense.cardLast4);
 
   const categoryOptions = useMemo(
     () => buildCategorySelectOptions(customCategories),
@@ -95,6 +98,16 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
       </Table.Td>
 
       <Table.Td>
+        <Text
+          fz="xs"
+          c={COLORS.textSecondary}
+          style={{ whiteSpace: 'nowrap', direction: 'ltr', unicodeBidi: 'isolate' }}
+        >
+          {formatDisplayDate(expense.date)}
+        </Text>
+      </Table.Td>
+
+      <Table.Td>
         {editing === 'description' ? (
           <TextInput
             size="xs"
@@ -144,6 +157,12 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
             )}
           </Stack>
         )}
+      </Table.Td>
+
+      <Table.Td>
+        <Text fz="xs" c={COLORS.textSecondary} style={{ whiteSpace: 'nowrap' }}>
+          {sourceLabel ?? '—'}
+        </Text>
       </Table.Td>
 
       <Table.Td>

@@ -29,7 +29,10 @@ export function ExpenseTable(): JSX.Element {
 
   const filteredExpenses = useMemo(() => {
     return monthData.expenses.filter((expense) =>
-      matchesSearchQuery(`${expense.description} ${expense.category} ${expense.note ?? ''}`, searchQuery)
+      matchesSearchQuery(
+        `${expense.description} ${expense.category} ${expense.note ?? ''} ${expense.source ?? ''} ${expense.cardLast4 ?? ''}`,
+        searchQuery
+      )
     );
   }, [monthData.expenses, searchQuery]);
 
@@ -96,14 +99,20 @@ export function ExpenseTable(): JSX.Element {
             לא נמצאו הוצאות מתאימות לחיפוש
           </Text>
         ) : (
-          <Table.ScrollContainer minWidth={320} type="native">
+          <Table.ScrollContainer minWidth={520} type="native">
             <Table verticalSpacing="xs" horizontalSpacing="xs" highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600, width: 130 }}>
                     קטגוריה
                   </Table.Th>
+                  <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600, width: 88 }}>
+                    תאריך
+                  </Table.Th>
                   <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600 }}>תיאור</Table.Th>
+                  <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600, width: 100 }}>
+                    מקור
+                  </Table.Th>
                   <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600, width: 110 }}>
                     סכום
                   </Table.Th>
@@ -115,7 +124,7 @@ export function ExpenseTable(): JSX.Element {
                   ? groups.map((group) => (
                       <Fragment key={`group-${group.category}`}>
                         <Table.Tr bg="#F8FAFC">
-                          <Table.Td colSpan={2}>
+                          <Table.Td colSpan={4}>
                             {(() => {
                               const meta = resolveCategoryMeta(group.category, customCategories);
                               return (

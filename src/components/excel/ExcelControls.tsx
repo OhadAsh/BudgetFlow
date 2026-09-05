@@ -38,6 +38,7 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
   const months = useExpenseStore((state) => state.months);
   const customCategories = useExpenseStore((state) => state.customCategories);
   const merchantMemory = useExpenseStore((state) => state.merchantMemory);
+  const categoryTargets = useExpenseStore((state) => state.categoryTargets);
   const importFromExcel = useExpenseStore((state) => state.importFromExcel);
   const applyImportedSettings = useExpenseStore((state) => state.applyImportedSettings);
 
@@ -58,7 +59,7 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
 
     try {
       downloadWorkbook(
-        exportToWorkbook(months, customCategories, merchantMemory),
+        exportToWorkbook(months, customCategories, merchantMemory, categoryTargets),
         buildExportFileName()
       );
       notifications.show({
@@ -113,10 +114,15 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
       const applied = applySettingsImport(
         customCategories,
         merchantMemory,
+        categoryTargets,
         result.settings,
         'merge'
       );
-      applyImportedSettings(applied.customCategories, applied.merchantMemory);
+      applyImportedSettings(
+        applied.customCategories,
+        applied.merchantMemory,
+        applied.categoryTargets
+      );
     }
 
     const creditTotal = result.preview.reduce((sum, row) => sum + row.creditCount, 0);
@@ -144,7 +150,7 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
     notifications.show({
       color: 'red',
       title: 'הנתונים נמחקו',
-      message: 'כל הנתונים המקומיים הוסרו מהדפדפן, כולל מפתח ה-AI.',
+      message: 'כל הנתונים המקומיים הוסרו מהדפדפן, כולל מפתח ה-AI ו-Google Client ID.',
     });
   };
 
@@ -199,7 +205,7 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
                 <Alert color="red" icon={<IconAlertTriangle size={18} />} title="מחיקת כל הנתונים">
                   <Stack gap="xs">
                     <Text fz="sm">
-                      הפעולה תמחק את כל החודשים, מפתח ה-AI והתובנות השמורות מהדפדפן ואינה ניתנת
+                      הפעולה תמחק את כל החודשים, מפתח ה-AI, Google Client ID והתובנות השמורות מהדפדפן ואינה ניתנת
                       לשחזור.
                     </Text>
                     <Group gap="xs">
@@ -244,7 +250,7 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
               {result.settings !== null && (
                 <Alert color="gray" title="הגדרות בקובץ">
                   <Text fz="sm">
-                    {`ייובאו גם ${result.settings.categories.length} קטגוריות מותאמות ו-${result.settings.merchants.length} עסקים בזיכרון (מיזוג עם הקיים).`}
+                    {`ייובאו גם ${result.settings.categories.length} קטגוריות מותאמות, ${result.settings.merchants.length} עסקים בזיכרון ו-${result.settings.targets.length} יעדים (מיזוג עם הקיים).`}
                   </Text>
                 </Alert>
               )}

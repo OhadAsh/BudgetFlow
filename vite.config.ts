@@ -1,15 +1,17 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   base: './',
   plugins: [react()],
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
   build: {
     outDir: 'dist',
     rollupOptions: {
       output: {
-        // Matched on resolved paths so transitive CommonJS internals (react/cjs, d3-*)
-        // land in the same chunk as their entry point instead of leaking into others.
         manualChunks(id: string): string | undefined {
           const path = id.replace(/\\/g, '/');
           if (!path.includes('/node_modules/')) {

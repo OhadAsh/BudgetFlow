@@ -193,7 +193,17 @@ export function getAvailableYears(months: MonthData[], fallbackYear: number): nu
 }
 
 export function sortExpenses(expenses: Expense[]): Expense[] {
-  return [...expenses].sort((a, b) => safeNumber(b.amount) - safeNumber(a.amount));
+  return [...expenses].sort((a, b) => {
+    const dateA = a.date ?? '';
+    const dateB = b.date ?? '';
+    if (dateA !== dateB) {
+      // Newest first; rows without a date sink to the bottom.
+      if (dateA.length === 0) return 1;
+      if (dateB.length === 0) return -1;
+      return dateB.localeCompare(dateA);
+    }
+    return safeNumber(b.amount) - safeNumber(a.amount);
+  });
 }
 
 export interface CategoryGroup {

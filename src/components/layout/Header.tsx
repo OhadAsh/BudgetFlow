@@ -29,6 +29,7 @@ import { CategoryManager } from '../categories/CategoryManager';
 import { YearSelector } from '../annual/YearSelector';
 import { BankImportModal } from '../excel/BankImportModal';
 import { ExcelControls } from '../excel/ExcelControls';
+import { GoogleDriveBackup } from '../excel/GoogleDriveBackup';
 
 type DeleteStep = null | 1 | 2;
 
@@ -36,6 +37,7 @@ export function Header(): JSX.Element {
   const months = useExpenseStore((state) => state.months);
   const customCategories = useExpenseStore((state) => state.customCategories);
   const merchantMemory = useExpenseStore((state) => state.merchantMemory);
+  const categoryTargets = useExpenseStore((state) => state.categoryTargets);
 
   const [deleteStep, setDeleteStep] = useState<DeleteStep>(null);
 
@@ -45,7 +47,13 @@ export function Header(): JSX.Element {
 
   const exportAllToExcel = (): void => {
     const merchantCount = Object.keys(merchantMemory).length;
-    if (months.length === 0 && customCategories.length === 0 && merchantCount === 0) {
+    const targetCount = Object.keys(categoryTargets).length;
+    if (
+      months.length === 0 &&
+      customCategories.length === 0 &&
+      merchantCount === 0 &&
+      targetCount === 0
+    ) {
       notifications.show({
         color: 'yellow',
         title: 'אין נתונים לייצוא',
@@ -56,7 +64,7 @@ export function Header(): JSX.Element {
 
     try {
       downloadWorkbook(
-        exportBackupWorkbook(months, customCategories, merchantMemory),
+        exportBackupWorkbook(months, customCategories, merchantMemory, categoryTargets),
         buildExportFileName()
       );
       const parts: string[] = [];
@@ -64,6 +72,9 @@ export function Header(): JSX.Element {
         parts.push(`${months.length} גיליונות חודשיים`);
       }
       parts.push('קטגוריות מותאמות וזיכרון עסקים');
+      if (targetCount > 0) {
+        parts.push('יעדי קטגוריות');
+      }
       notifications.show({
         color: 'emerald',
         title: 'הגיבוי הושלם',
@@ -84,7 +95,7 @@ export function Header(): JSX.Element {
     notifications.show({
       color: 'emerald',
       title: 'הצלחה',
-      message: 'כל הנתונים נמחקו בהצלחה, כולל מפתח ה-AI',
+      message: 'כל הנתונים נמחקו בהצלחה, כולל מפתח ה-AI ו-Google Client ID',
     });
   };
 
@@ -121,6 +132,7 @@ export function Header(): JSX.Element {
               <BankImportModal mode="card" />
               <BankImportModal mode="bank" />
               <ExcelControls compact />
+              <GoogleDriveBackup compact />
             </Group>
 
             <Button
@@ -150,7 +162,7 @@ export function Header(): JSX.Element {
             icon={<IconAlertTriangle size={18} />}
             title="פעולה בלתי הפיכה"
           >
-            פעולה זו תמחק את כל ההוצאות, ההכנסות, מפתח ה-AI והתובנות השמורות.
+            פעולה זו תמחק את כל ההוצאות, ההכנסות, מפתח ה-AI, Google Client ID והתובנות השמורות.
             לא ניתן לשחזר את הנתונים לאחר המחיקה.
           </Alert>
 
@@ -188,7 +200,7 @@ export function Header(): JSX.Element {
             האם אתה בטוח לחלוטין?
           </Text>
           <Text ta="center" c="dimmed" size="sm" mt="xs">
-            כל הנתונים, כולל מפתח ה-AI, יימחקו לצמיתות
+            כל הנתונים, כולל מפתח ה-AI ו-Google Client ID, יימחקו לצמיתות
           </Text>
           <Group mt="xl" justify="center">
             <Button variant="default" radius="xl" onClick={() => setDeleteStep(1)}>

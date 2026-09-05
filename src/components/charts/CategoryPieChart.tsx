@@ -1,9 +1,10 @@
-import { Box, Card, Group, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Box, Card, Group, Progress, SimpleGrid, Stack, Text } from '@mantine/core';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import type { CategoryBreakdownItem } from '../../types';
 import { COLORS, SECTION_TITLE_STYLE } from '../../lib/constants';
 import { formatCurrency, formatPercent } from '../../lib/utils';
 import { useMonthData } from '../../hooks/useMonthData';
+import { useExpenseStore } from '../../store/useExpenseStore';
 
 interface TooltipEntry {
   payload?: CategoryBreakdownItem;
@@ -43,6 +44,7 @@ function CategoryTooltip({ active, payload }: CategoryTooltipProps): JSX.Element
 
 export function CategoryPieChart(): JSX.Element {
   const { breakdown, largestCategory, stats } = useMonthData();
+  const categoryTargets = useExpenseStore((state) => state.categoryTargets);
 
   return (
     <Card>
@@ -99,26 +101,61 @@ export function CategoryPieChart(): JSX.Element {
               </Stack>
             </Box>
 
-            <SimpleGrid cols={2} spacing={6} verticalSpacing={6}>
-              {breakdown.map((item) => (
-                <Group key={item.category} gap={6} wrap="nowrap">
-                  <Box
-                    style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: 999,
-                      backgroundColor: item.color,
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Text fz="xs" c={COLORS.textPrimary} style={{ whiteSpace: 'nowrap' }}>
-                    {item.category}
-                  </Text>
-                  <Text fz="xs" fw={600} c={COLORS.textSecondary} style={{ whiteSpace: 'nowrap' }}>
-                    {`${formatCurrency(item.amount)} · ${formatPercent(item.percentage)}`}
-                  </Text>
-                </Group>
-              ))}
+            <SimpleGrid cols={1} spacing={8}>
+              {breakdown.map((item) => {
+                const target = categoryTargets[item.category];
+                const hasTarget = typeof target === 'number' && target > 0;
+                const ratio = hasTarget ? (item.amount / target) * 100 : null;
+                const overTarget = ratio !== null && ratio > 100;
+
+                return (
+                  <Box key={item.category}>
+                    <Group gap={6} wrap="nowrap" justify="space-between">
+                      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                        <Box
+                          style={{
+                            width: 10,
+                            height: 10,
+                            borderRadius: 999,
+                            backgroundColor: item.color,
+                            flexShrink: 0,
+                          }}
+                        />
+                        <Text fz="xs" c={COLORS.textPrimary} truncate>
+                          {item.category}
+                        </Text>
+                      </Group>
+                      <Text
+                        fz="xs"
+                        fw={600}
+                        c={overTarget ? COLORS.expense : COLORS.textSecondary}
+                        style={{ whiteSpace: 'nowrap', direction: 'ltr', unicodeBidi: 'isolate' }}
+                      >
+                        {hasTarget
+                          ? `${formatCurrency(item.amount)} / ${formatCurrency(target)}`
+                          : `${formatCurrency(item.amount)} · ${formatPercent(item.percentage)}`}
+                      </Text>
+                    </Group>
+                    {hasTarget && ratio !== null && (
+                      <Progress
+                        mt={4}
+                        size="sm"
+                        radius="xl"
+                        value={Math.min(ratio, 100)}
+                        color={overTarget ? 'red' : 'emerald'}
+                        aria-label={`התקדמות יעד ${item.category}`}
+                      />
+                    )}
+                    {hasTarget && ratio !== null && (
+                      <Text fz={11} c={overTarget ? COLORS.expense : COLORS.textSecondary} mt={2}>
+                        {overTarget
+                          ? `${formatPercent(ratio)} מהיעד (חריגה)`
+                          : `${formatPercent(ratio)} מהיעד · נותר ${formatCurrency(Math.max(target - item.amount, 0))}`}
+                      </Text>
+                    )}
+                  </Box>
+                );
+              })}
             </SimpleGrid>
 
             <Text fz="xs" c={COLORS.textSecondary} ta="center">

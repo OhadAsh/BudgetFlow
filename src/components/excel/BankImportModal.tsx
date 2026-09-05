@@ -45,6 +45,7 @@ import {
   resolveCardExpenseDate,
   resolveCardTransactionPeriod,
 } from '../../lib/excelParser';
+import { isDuplicateFingerprint } from '../../lib/transactionIdentity';
 import {
   buildCategorySelectOptions,
   formatCurrency,
@@ -184,7 +185,22 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   const duplicateIds = useMemo(() => {
     const ids = new Set<string>();
     cardResult?.transactions.forEach((transaction) => {
-      if (!transaction.isPending && existingHashes.has(transaction.hash)) {
+      if (transaction.isPending) return;
+      if (
+        isDuplicateFingerprint(
+          existingHashes,
+          {
+            isoDate: transaction.date,
+            merchant: transaction.merchant,
+            chargeAmount: transaction.chargeAmount,
+            installment: transaction.installment,
+            chargePeriod: transaction.chargePeriod,
+            source: transaction.source ?? cardResult.source,
+            cardLast4: transaction.cardLast4 ?? cardResult.cardLast4 ?? null,
+          },
+          transaction.hash
+        )
+      ) {
         ids.add(transaction.id);
       }
     });
@@ -194,7 +210,18 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   const bankExpenseDuplicateIds = useMemo(() => {
     const ids = new Set<string>();
     (bankResult?.expenses ?? []).forEach((expense) => {
-      if (existingHashes.has(expense.hash)) {
+      if (
+        isDuplicateFingerprint(
+          existingHashes,
+          {
+            isoDate: expense.date,
+            merchant: expense.description,
+            chargeAmount: expense.amount,
+            source: 'discount',
+          },
+          expense.hash
+        )
+      ) {
         ids.add(expense.id);
       }
     });
@@ -499,6 +526,8 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
         date: expenseDate,
         note: buildCardImportNote(transaction),
         hash: transaction.hash,
+        source: transaction.source ?? cardResult.source,
+        cardLast4: transaction.cardLast4 ?? cardResult.cardLast4 ?? null,
       });
       monthsTouched.add(`${period.year}-${period.month.toString().padStart(2, '0')}`);
     });
@@ -557,6 +586,7 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
         date: expense.date.length > 0 ? expense.date : undefined,
         note: 'הוראת קבע / תנועת עו״ש',
         hash: expense.hash,
+        source: 'discount',
       });
       monthsTouched.add(`${period.year}-${period.month.toString().padStart(2, '0')}`);
     });

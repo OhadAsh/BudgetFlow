@@ -2,6 +2,15 @@ import type { BuiltInCategory, CategoryType, MonthData } from '../types';
 
 export const STORAGE_KEY = 'expense-tracker-v1';
 
+/** Only files created/opened by this app — never full Drive access. */
+export const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+/** Fixed backup file name so upload updates the same file instead of duplicating. */
+export const DRIVE_BACKUP_FILE_NAME = 'budgetflow-backup.json';
+
+/** Schema version written into Drive backup JSON. */
+export const DRIVE_BACKUP_VERSION = 1 as const;
+
 export interface BuiltInCategoryMeta {
   name: BuiltInCategory;
   emoji: string;
@@ -153,6 +162,10 @@ export const EXCEL_HEADERS = {
   description: 'תיאור',
   amount: 'סכום',
   date: 'תאריך',
+  note: 'הערה',
+  hash: 'מזהה',
+  source: 'מקור',
+  cardLast4: '4 ספרות',
   total: 'סה"כ',
 } as const;
 

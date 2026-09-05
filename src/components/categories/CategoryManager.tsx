@@ -7,6 +7,7 @@ import {
   Divider,
   Group,
   Modal,
+  NumberInput,
   Select,
   SimpleGrid,
   Stack,
@@ -34,6 +35,7 @@ import {
 import { applySettingsImport } from '../../lib/settingsImport';
 import {
   buildCategorySelectOptions,
+  formatCurrency,
   isCategoryNameTaken,
   isCategoryType,
   matchesSearchQuery,
@@ -43,9 +45,11 @@ import { useExpenseStore } from '../../store/useExpenseStore';
 export function CategoryManager(): JSX.Element {
   const customCategories = useExpenseStore((state) => state.customCategories);
   const merchantMemory = useExpenseStore((state) => state.merchantMemory);
+  const categoryTargets = useExpenseStore((state) => state.categoryTargets);
   const addCustomCategory = useExpenseStore((state) => state.addCustomCategory);
   const updateCustomCategory = useExpenseStore((state) => state.updateCustomCategory);
   const removeCustomCategory = useExpenseStore((state) => state.removeCustomCategory);
+  const setCategoryTarget = useExpenseStore((state) => state.setCategoryTarget);
   const rememberMerchant = useExpenseStore((state) => state.rememberMerchant);
   const forgetMerchant = useExpenseStore((state) => state.forgetMerchant);
   const applyMerchantMemoryToAllExpenses = useExpenseStore(
@@ -69,6 +73,7 @@ export function CategoryManager(): JSX.Element {
   );
 
   const memoryCount = Object.keys(merchantMemory).length;
+  const targetCount = Object.keys(categoryTargets).length;
 
   const memoryRows = useMemo(() => {
     return Object.entries(merchantMemory)
@@ -140,24 +145,24 @@ export function CategoryManager(): JSX.Element {
   };
 
   const handleExportSettings = (): void => {
-    if (customCategories.length === 0 && memoryCount === 0) {
+    if (customCategories.length === 0 && memoryCount === 0 && targetCount === 0) {
       notifications.show({
         color: 'yellow',
         title: 'אין הגדרות לייצוא',
-        message: 'הוסף קטגוריות מותאמות או זיכרון עסקים לפני הייצוא.',
+        message: 'הוסף קטגוריות, זיכרון עסקים או יעדים לפני הייצוא.',
       });
       return;
     }
 
     try {
       downloadWorkbook(
-        exportSettingsToWorkbook(customCategories, merchantMemory),
+        exportSettingsToWorkbook(customCategories, merchantMemory, categoryTargets),
         SETTINGS_EXPORT_FILE_NAME
       );
       notifications.show({
         color: 'emerald',
         title: 'הייצוא הושלם',
-        message: 'נוצר קובץ עם קטגוריות מותאמות וזיכרון עסקים.',
+        message: 'נוצר קובץ עם קטגוריות מותאמות, זיכרון עסקים ויעדים.',
       });
     } catch {
       notifications.show({
@@ -192,10 +197,15 @@ export function CategoryManager(): JSX.Element {
     const applied = applySettingsImport(
       customCategories,
       merchantMemory,
+      categoryTargets,
       settingsPreview,
       mode
     );
-    applyImportedSettings(applied.customCategories, applied.merchantMemory);
+    applyImportedSettings(
+      applied.customCategories,
+      applied.merchantMemory,
+      applied.categoryTargets
+    );
 
     notifications.show({
       color: 'emerald',
@@ -206,6 +216,23 @@ export function CategoryManager(): JSX.Element {
           : 'ערכים תואמים הוחלפו; שאר ההגדרות נשמרו.',
     });
     setSettingsPreview(null);
+  };
+
+  const handleTargetChange = (category: string, value: string | number): void => {
+    if (value === '' || value === null || value === undefined) {
+      setCategoryTarget(category, null);
+      return;
+    }
+    const parsed = typeof value === 'number' ? value : Number.parseFloat(String(value));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      notifications.show({
+        color: 'yellow',
+        title: 'יעד לא תקין',
+        message: 'יש להזין סכום שאינו שלילי, או להשאיר ריק לביטול היעד.',
+      });
+      return;
+    }
+    setCategoryTarget(category, parsed);
   };
 
   return (
@@ -233,27 +260,47 @@ export function CategoryManager(): JSX.Element {
             <Stack gap="lg">
               <Box>
                 <Text size="xs" c="dimmed" mb="xs">
-                  קטגוריות מובנות
+                  קטגוריות מובנות — יעד חודשי אופציונלי
                 </Text>
-                <Group gap="xs">
+                <Stack gap="xs">
                   {BUILT_IN_CATEGORIES.map((entry) => (
-                    <Badge
-                      key={entry.name}
-                      variant="light"
-                      radius="sm"
-                      styles={{
-                        root: {
-                          backgroundColor: `${entry.color}1A`,
-                          color: entry.color,
-                          textTransform: 'none',
-                          fontWeight: 600,
-                        },
-                      }}
-                    >
-                      {`${entry.emoji} ${entry.name}`}
-                    </Badge>
+                    <Group key={entry.name} wrap="nowrap" gap="sm" align="center">
+                      <Badge
+                        variant="light"
+                        radius="sm"
+                        styles={{
+                          root: {
+                            backgroundColor: `${entry.color}1A`,
+                            color: entry.color,
+                            textTransform: 'none',
+                            fontWeight: 600,
+                            minWidth: 110,
+                          },
+                        }}
+                      >
+                        {`${entry.emoji} ${entry.name}`}
+                      </Badge>
+                      <NumberInput
+                        size="xs"
+                        style={{ flex: 1, maxWidth: 160 }}
+                        prefix="₪"
+                        min={0}
+                        decimalScale={0}
+                        thousandSeparator=","
+                        hideControls
+                        placeholder="ללא יעד"
+                        aria-label={`יעד חודשי ל${entry.name}`}
+                        value={categoryTargets[entry.name] ?? ''}
+                        onChange={(value) => handleTargetChange(entry.name, value)}
+                      />
+                      <Text fz="xs" c="dimmed" w={72}>
+                        {categoryTargets[entry.name] !== undefined
+                          ? formatCurrency(categoryTargets[entry.name])
+                          : '— ללא יעד'}
+                      </Text>
+                    </Group>
                   ))}
-                </Group>
+                </Stack>
               </Box>
 
               <Box>
@@ -283,53 +330,69 @@ export function CategoryManager(): JSX.Element {
 
                 <Stack gap="sm">
                   {customCategories.map((entry) => (
-                    <Group key={entry.id} wrap="nowrap" gap="xs" align="center">
-                      <Text fz="lg" w={28} ta="center">
-                        {entry.emoji}
-                      </Text>
-                      <TextInput
-                        size="xs"
-                        style={{ flex: 1 }}
-                        aria-label={`שם קטגוריה ${entry.name}`}
-                        value={entry.name}
-                        onChange={(event) => {
-                          const value = event.currentTarget.value;
-                          if (
-                            !isCategoryNameTaken(value, customCategories, entry.id) ||
-                            value.trim() === entry.name
-                          ) {
-                            updateCustomCategory(entry.id, { name: value });
-                          }
-                        }}
-                      />
-                      <Group gap={4} wrap="nowrap">
-                        {COLOR_OPTIONS.map((color) => (
-                          <UnstyledButton
-                            key={color}
-                            aria-label={`צבע ${color}`}
-                            onClick={() => updateCustomCategory(entry.id, { color })}
-                            style={{
-                              width: 18,
-                              height: 18,
-                              borderRadius: 999,
-                              backgroundColor: color,
-                              outline:
-                                entry.color === color ? `2px solid ${COLORS.textPrimary}` : 'none',
-                              outlineOffset: 1,
-                            }}
-                          />
-                        ))}
+                    <Stack key={entry.id} gap={4}>
+                      <Group wrap="nowrap" gap="xs" align="center">
+                        <Text fz="lg" w={28} ta="center">
+                          {entry.emoji}
+                        </Text>
+                        <TextInput
+                          size="xs"
+                          style={{ flex: 1 }}
+                          aria-label={`שם קטגוריה ${entry.name}`}
+                          value={entry.name}
+                          onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            if (
+                              !isCategoryNameTaken(value, customCategories, entry.id) ||
+                              value.trim() === entry.name
+                            ) {
+                              updateCustomCategory(entry.id, { name: value });
+                            }
+                          }}
+                        />
+                        <Group gap={4} wrap="nowrap">
+                          {COLOR_OPTIONS.map((color) => (
+                            <UnstyledButton
+                              key={color}
+                              aria-label={`צבע ${color}`}
+                              onClick={() => updateCustomCategory(entry.id, { color })}
+                              style={{
+                                width: 18,
+                                height: 18,
+                                borderRadius: 999,
+                                backgroundColor: color,
+                                outline:
+                                  entry.color === color ? `2px solid ${COLORS.textPrimary}` : 'none',
+                                outlineOffset: 1,
+                              }}
+                            />
+                          ))}
+                        </Group>
+                        <ActionIcon
+                          variant="subtle"
+                          color="red"
+                          radius="xl"
+                          aria-label={`מחיקת קטגוריה ${entry.name}`}
+                          onClick={() => removeCustomCategory(entry.id)}
+                        >
+                          <IconTrash size={15} />
+                        </ActionIcon>
                       </Group>
-                      <ActionIcon
-                        variant="subtle"
-                        color="red"
-                        radius="xl"
-                        aria-label={`מחיקת קטגוריה ${entry.name}`}
-                        onClick={() => removeCustomCategory(entry.id)}
-                      >
-                        <IconTrash size={15} />
-                      </ActionIcon>
-                    </Group>
+                      <NumberInput
+                        size="xs"
+                        ms={36}
+                        maw={180}
+                        prefix="₪"
+                        min={0}
+                        decimalScale={0}
+                        thousandSeparator=","
+                        hideControls
+                        placeholder="יעד חודשי (אופציונלי)"
+                        aria-label={`יעד חודשי ל${entry.name}`}
+                        value={categoryTargets[entry.name] ?? ''}
+                        onChange={(value) => handleTargetChange(entry.name, value)}
+                      />
+                    </Stack>
                   ))}
                 </Stack>
 
@@ -557,7 +620,7 @@ export function CategoryManager(): JSX.Element {
         {settingsPreview && (
           <Stack gap="md">
             <Text>
-              {`נמצאו ${settingsPreview.categories.length} קטגוריות ו-${settingsPreview.merchants.length} עסקים. לייבא?`}
+              {`נמצאו ${settingsPreview.categories.length} קטגוריות, ${settingsPreview.merchants.length} עסקים ו-${settingsPreview.targets.length} יעדים. לייבא?`}
             </Text>
             <Group grow>
               <Button

@@ -24,17 +24,34 @@ export interface MerchantMemory {
   [merchantName: string]: string;
 }
 
+/** Statement formats the importer can recognise. */
+export type BankSource = 'cal' | 'max' | 'discount';
+
+/** Credit-card statement formats (expense flow). */
+export type CardSource = Extract<BankSource, 'cal' | 'max'>;
+
 export interface Expense {
   id: string;
   category: CategoryType;
   description: string;
   amount: number;
+  /** ISO date (YYYY-MM-DD) of the transaction / charge — not the import time. */
   date?: string;
   /** Free note, e.g. the installment marker "תשלום 2 מתוך 12" from a card statement. */
   note?: string;
-  /** Fingerprint of an imported card transaction, used to detect re-imports. */
+  /**
+   * Deterministic external fingerprint of an imported card/bank transaction.
+   * Survives Excel export/import; used for duplicate detection (not the internal UUID).
+   */
   hash?: string;
+  /** Card/bank issuer when the row was imported from a statement. */
+  source?: BankSource | null;
+  /** Last 4 digits of the card when present on the statement — never a full number. */
+  cardLast4?: string | null;
 }
+
+/** Optional monthly spending target (₪) keyed by category name. Absent = no target. */
+export type CategoryTargets = Record<string, number>;
 
 export interface IncomeSource {
   id: string;
@@ -97,6 +114,18 @@ export interface MonthlySeriesPoint {
 
 export type ViewTab = 'overview' | 'expenses' | 'annual';
 
+/** Full app snapshot stored as JSON on Google Drive. */
+export interface DriveBackupPayload {
+  version: number;
+  exportedAt: string;
+  months: MonthData[];
+  selectedYear: number;
+  selectedMonth: number;
+  customCategories: CustomCategory[];
+  merchantMemory: MerchantMemory;
+  categoryTargets: CategoryTargets;
+}
+
 export interface ImportPreviewRow {
   year: number;
   month: number;
@@ -130,18 +159,20 @@ export interface SettingsImportMerchant {
   category: string;
 }
 
+/** One optional monthly target from a settings Excel sheet. */
+export interface SettingsImportTarget {
+  category: string;
+  /** Monthly target in ₪; null clears / means no target. */
+  monthlyTarget: number | null;
+}
+
 export interface SettingsParseResult {
   categories: SettingsImportCategory[];
   merchants: SettingsImportMerchant[];
+  targets: SettingsImportTarget[];
 }
 
 export type SettingsImportMode = 'merge' | 'replace';
-
-/** Statement formats the importer can recognise. */
-export type BankSource = 'cal' | 'max' | 'discount';
-
-/** Credit-card statement formats (expense flow). */
-export type CardSource = Extract<BankSource, 'cal' | 'max'>;
 
 export interface BankTransaction {
   id: string;
@@ -163,6 +194,10 @@ export interface BankTransaction {
   /** True when "סכום חיוב" is empty — the charge has not happened yet. */
   isPending: boolean;
   hash: string;
+  /** Issuer for this row (copied from the statement). */
+  source?: CardSource;
+  /** Last 4 digits when found in the statement header. */
+  cardLast4?: string;
 }
 
 export interface BankImportResult {
@@ -174,6 +209,8 @@ export interface BankImportResult {
   fileCount: number;
   /** Charge month taken from the statement header, when present. */
   chargePeriod: { year: number; month: number } | null;
+  /** Last 4 digits from the statement header, when present. */
+  cardLast4?: string;
   transactions: BankTransaction[];
 }
 

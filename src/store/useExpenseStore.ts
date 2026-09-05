@@ -1,6 +1,14 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { CustomCategory, Expense, IncomeSource, MerchantMemory, MonthData } from '../types';
+import type {
+  CategoryTargets,
+  CustomCategory,
+  DriveBackupPayload,
+  Expense,
+  IncomeSource,
+  MerchantMemory,
+  MonthData,
+} from '../types';
 import { STORAGE_KEY, createSeedMonths } from '../lib/constants';
 import { applyMerchantMemoryToMonths, clampMonth, currentMonth, currentYear, normalizeMerchantName } from '../lib/utils';
 
@@ -10,6 +18,8 @@ interface ExpenseState {
   selectedMonth: number;
   customCategories: CustomCategory[];
   merchantMemory: MerchantMemory;
+  /** Optional monthly spending targets (₪) keyed by category name. */
+  categoryTargets: CategoryTargets;
 
   setSelectedPeriod: (year: number, month: number) => void;
   setSelectedYear: (year: number) => void;
@@ -27,6 +37,9 @@ interface ExpenseState {
   updateCustomCategory: (id: string, patch: Partial<Omit<CustomCategory, 'id'>>) => void;
   removeCustomCategory: (id: string) => void;
 
+  /** Sets or clears a monthly spending target for a category (null/undefined clears). */
+  setCategoryTarget: (category: string, monthlyTarget: number | null) => void;
+
   rememberMerchant: (merchant: string, category: string) => void;
   forgetMerchant: (merchant: string) => void;
   /** Applies merchant-memory categories to every matching expense across all months. */
@@ -34,13 +47,16 @@ interface ExpenseState {
   /** Removes every month belonging to the given year. */
   deleteYear: (year: number) => void;
 
-  /** Replaces custom categories + merchant memory in one shot (settings import). */
+  /** Replaces custom categories + merchant memory (+ optional targets) in one shot. */
   applyImportedSettings: (
     customCategories: CustomCategory[],
-    merchantMemory: MerchantMemory
+    merchantMemory: MerchantMemory,
+    categoryTargets?: CategoryTargets
   ) => void;
 
   importFromExcel: (months: MonthData[]) => void;
+  /** Full replace from a Google Drive (or other) JSON backup snapshot. */
+  restoreFromBackup: (payload: DriveBackupPayload) => void;
   clearAll: () => void;
 }
 
@@ -115,6 +131,19 @@ function resolveInitialPeriod(months: MonthData[]): { year: number; month: numbe
   return latest === null ? { year, month } : { year: latest.year, month: latest.month };
 }
 
+function normalizeCategoryTargets(value: unknown): CategoryTargets {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  const result: CategoryTargets = {};
+  Object.entries(value as Record<string, unknown>).forEach(([category, target]) => {
+    if (typeof target === 'number' && Number.isFinite(target) && target >= 0) {
+      result[category] = target;
+    }
+  });
+  return result;
+}
+
 const initialMonths = createSeedMonths();
 const initialPeriod = resolveInitialPeriod(initialMonths);
 
@@ -126,6 +155,7 @@ export const useExpenseStore = create<ExpenseState>()(
       selectedMonth: initialPeriod.month,
       customCategories: [],
       merchantMemory: {},
+      categoryTargets: {},
 
       setSelectedPeriod: (year, month) =>
         set({ selectedYear: year, selectedMonth: clampMonth(month) }),
@@ -245,13 +275,43 @@ export const useExpenseStore = create<ExpenseState>()(
             merchantMemory[merchant] = category === current.name ? nextName : category;
           });
 
-          return { customCategories, months, merchantMemory };
+          const categoryTargets: CategoryTargets = {};
+          Object.entries(state.categoryTargets).forEach(([category, target]) => {
+            categoryTargets[category === current.name ? nextName : category] = target;
+          });
+
+          return { customCategories, months, merchantMemory, categoryTargets };
         }),
 
       removeCustomCategory: (id) =>
-        set((state) => ({
-          customCategories: state.customCategories.filter((entry) => entry.id !== id),
-        })),
+        set((state) => {
+          const removed = state.customCategories.find((entry) => entry.id === id);
+          const customCategories = state.customCategories.filter((entry) => entry.id !== id);
+          if (!removed) {
+            return { customCategories };
+          }
+          const categoryTargets = { ...state.categoryTargets };
+          delete categoryTargets[removed.name];
+          return { customCategories, categoryTargets };
+        }),
+
+      setCategoryTarget: (category, monthlyTarget) =>
+        set((state) => {
+          const key = category.trim();
+          if (key.length === 0) return state;
+          const categoryTargets = { ...state.categoryTargets };
+          if (
+            monthlyTarget === null ||
+            monthlyTarget === undefined ||
+            !Number.isFinite(monthlyTarget) ||
+            monthlyTarget < 0
+          ) {
+            delete categoryTargets[key];
+          } else {
+            categoryTargets[key] = monthlyTarget;
+          }
+          return { categoryTargets };
+        }),
 
       rememberMerchant: (merchant, category) => {
         const key = normalizeMerchantName(merchant);
@@ -290,8 +350,13 @@ export const useExpenseStore = create<ExpenseState>()(
           };
         }),
 
-      applyImportedSettings: (customCategories, merchantMemory) =>
-        set({ customCategories, merchantMemory }),
+      applyImportedSettings: (customCategories, merchantMemory, categoryTargets) =>
+        set((state) => ({
+          customCategories,
+          merchantMemory,
+          categoryTargets:
+            categoryTargets !== undefined ? categoryTargets : state.categoryTargets,
+        })),
 
       importFromExcel: (imported) =>
         set((state) => {
@@ -304,6 +369,16 @@ export const useExpenseStore = create<ExpenseState>()(
           return { months: sortMonths([...merged, ...imported]) };
         }),
 
+      restoreFromBackup: (payload) =>
+        set({
+          months: sortMonths(pruneEmptyMonths(payload.months)),
+          selectedYear: payload.selectedYear,
+          selectedMonth: clampMonth(payload.selectedMonth),
+          customCategories: payload.customCategories,
+          merchantMemory: payload.merchantMemory,
+          categoryTargets: normalizeCategoryTargets(payload.categoryTargets),
+        }),
+
       clearAll: () =>
         set({
           months: [],
@@ -311,12 +386,13 @@ export const useExpenseStore = create<ExpenseState>()(
           selectedMonth: currentMonth(),
           customCategories: [],
           merchantMemory: {},
+          categoryTargets: {},
         }),
     }),
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      version: 3,
+      version: 4,
       migrate: (persisted) => {
         const state = (persisted ?? {}) as Record<string, unknown>;
         const rawMonths = Array.isArray(state.months) ? (state.months as MonthData[]) : [];
@@ -336,6 +412,7 @@ export const useExpenseStore = create<ExpenseState>()(
             !Array.isArray(state.merchantMemory)
               ? state.merchantMemory
               : {},
+          categoryTargets: normalizeCategoryTargets(state.categoryTargets),
         };
       },
       partialize: (state) => ({
@@ -344,6 +421,7 @@ export const useExpenseStore = create<ExpenseState>()(
         selectedMonth: state.selectedMonth,
         customCategories: state.customCategories,
         merchantMemory: state.merchantMemory,
+        categoryTargets: state.categoryTargets,
       }),
     }
   )
