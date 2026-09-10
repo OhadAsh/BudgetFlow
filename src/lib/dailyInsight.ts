@@ -3,8 +3,8 @@ import { HEBREW_MONTHS } from './constants';
 
 export const DAILY_INSIGHT_STORAGE_KEY = 'daily-insight-v1';
 export const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-export const OPENROUTER_MODEL = 'google/gemma-4-26b-a4b-it:free';
-export const OPENROUTER_MODEL_URL = 'https://openrouter.ai/google/gemma-4-26b-a4b-it:free';
+export const OPENROUTER_MODEL = 'openrouter/free';
+export const OPENROUTER_MODEL_URL = 'https://openrouter.ai/openrouter/free';
 
 export interface StoredDailyInsight {
   date: string;
