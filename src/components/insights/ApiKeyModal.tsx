@@ -55,7 +55,7 @@ export function ApiKeyModal({ opened, onClose, errorMessage }: ApiKeyModalProps)
             {OPENROUTER_MODEL} <IconExternalLink size={12} style={{ verticalAlign: 'middle' }} />
           </Anchor>
           <Text size="xs" c="dimmed">
-            חינמי — נדרש חשבון ב-OpenRouter
+            Google Gemma 4 (26B) — חינמי דרך OpenRouter, נדרש חשבון ומפתח API
           </Text>
         </Stack>
 
