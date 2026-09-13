@@ -54,6 +54,15 @@ export class DriveParseError extends Error {
   }
 }
 
+export class DriveApiDisabledError extends Error {
+  constructor(
+    message = 'יש להפעיל את Google Drive API בפרויקט ב-Google Cloud Console, ואז להמתין כמה דקות ולנסות שוב.'
+  ) {
+    super(message);
+    this.name = 'DriveApiDisabledError';
+  }
+}
+
 interface DriveFileListResponse {
   files?: Array<{ id: string; name: string }>;
 }
@@ -67,6 +76,39 @@ function authHeaders(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` };
 }
 
+interface GoogleApiErrorBody {
+  error?: {
+    status?: string;
+    message?: string;
+    errors?: Array<{ reason?: string }>;
+    details?: Array<{ reason?: string }>;
+  };
+}
+
+async function throwIfDriveApiDisabled(response: Response): Promise<void> {
+  if (response.status !== 403) {
+    return;
+  }
+  let body: GoogleApiErrorBody;
+  try {
+    body = (await response.clone().json()) as GoogleApiErrorBody;
+  } catch {
+    return;
+  }
+  const reason =
+    body.error?.errors?.[0]?.reason ??
+    body.error?.details?.find((d) => d.reason)?.reason;
+  const message = body.error?.message ?? '';
+  if (
+    reason === 'accessNotConfigured' ||
+    reason === 'SERVICE_DISABLED' ||
+    message.includes('has not been used') ||
+    message.includes('is disabled')
+  ) {
+    throw new DriveApiDisabledError();
+  }
+}
+
 async function driveFetch(url: string, init: RequestInit): Promise<Response> {
   let response: Response;
   try {
@@ -78,6 +120,8 @@ async function driveFetch(url: string, init: RequestInit): Promise<Response> {
   if (response.status === 401) {
     throw new DriveAuthError();
   }
+
+  await throwIfDriveApiDisabled(response);
 
   return response;
 }

@@ -10,6 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useGoogleDrive } from '../../hooks/useGoogleDrive';
 import {
+  DriveApiDisabledError,
   DriveNetworkError,
   DriveNotFoundError,
   DriveParseError,
@@ -24,6 +25,7 @@ interface GoogleDriveBackupProps {
 
 function errorMessage(error: unknown): string {
   if (
+    error instanceof DriveApiDisabledError ||
     error instanceof DriveNetworkError ||
     error instanceof DriveNotFoundError ||
     error instanceof DriveParseError

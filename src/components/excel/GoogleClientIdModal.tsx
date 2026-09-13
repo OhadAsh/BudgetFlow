@@ -68,8 +68,22 @@ export function GoogleClientIdModal({
         </Alert>
 
         <Text size="sm" c="dimmed">
-          צור OAuth Client ID מסוג Web application ב-Google Cloud Console, והוסף את כתובת האתר
-          שלך (ו-localhost לפיתוח) תחת Authorized JavaScript origins.
+          ב-Google Cloud Console: (1) הפעל את Google Drive API בפרויקט, (2) צור OAuth Client ID
+          מסוג Web application, והוסף את כתובת האתר שלך (ו-localhost לפיתוח) תחת Authorized
+          JavaScript origins.
+        </Text>
+
+        <Text size="xs" c="dimmed">
+          הפעלת API:{' '}
+          <Anchor
+            href="https://console.developers.google.com/apis/api/drive.googleapis.com/overview"
+            target="_blank"
+            rel="noopener noreferrer"
+            size="xs"
+          >
+            Google Drive API{' '}
+            <IconExternalLink size={12} style={{ verticalAlign: 'middle' }} />
+          </Anchor>
         </Text>
 
         <TextInput
