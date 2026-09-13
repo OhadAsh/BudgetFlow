@@ -1,4 +1,5 @@
-import { Box, Card, Group, Progress, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Badge, Box, Card, Group, Progress, SimpleGrid, Stack, Text } from '@mantine/core';
+import { IconAlertTriangle, IconChartPie, IconTarget } from '@tabler/icons-react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import type { CategoryBreakdownItem } from '../../types';
 import { COLORS, SECTION_TITLE_STYLE } from '../../lib/constants';
@@ -22,7 +23,7 @@ function CategoryTooltip({ active, payload }: CategoryTooltipProps): JSX.Element
   return (
     <Box
       p="xs"
-      bg="#FFFFFF"
+      bg={COLORS.tooltipBg}
       style={{
         borderRadius: 12,
         boxShadow: '0 4px 16px rgba(15, 23, 42, 0.12)',
@@ -133,25 +134,63 @@ export function CategoryPieChart(): JSX.Element {
                       >
                         {hasTarget
                           ? `${formatCurrency(item.amount)} / ${formatCurrency(target)}`
-                          : `${formatCurrency(item.amount)} · ${formatPercent(item.percentage)}`}
+                          : formatCurrency(item.amount)}
                       </Text>
                     </Group>
-                    {hasTarget && ratio !== null && (
-                      <Progress
-                        mt={4}
-                        size="sm"
-                        radius="xl"
-                        value={Math.min(ratio, 100)}
-                        color={overTarget ? 'red' : 'emerald'}
-                        aria-label={`התקדמות יעד ${item.category}`}
-                      />
-                    )}
-                    {hasTarget && ratio !== null && (
-                      <Text fz={11} c={overTarget ? COLORS.expense : COLORS.textSecondary} mt={2}>
-                        {overTarget
-                          ? `${formatPercent(ratio)} מהיעד (חריגה)`
-                          : `${formatPercent(ratio)} מהיעד · נותר ${formatCurrency(Math.max(target - item.amount, 0))}`}
-                      </Text>
+
+                    {hasTarget && ratio !== null ? (
+                      <>
+                        <Progress
+                          mt={4}
+                          size="sm"
+                          radius="xl"
+                          value={Math.min(ratio, 100)}
+                          color={overTarget ? 'red' : 'emerald'}
+                          aria-label={`התקדמות יעד ${item.category}`}
+                        />
+                        <Group gap={6} mt={4} justify="space-between" wrap="nowrap">
+                          <Badge
+                            size="xs"
+                            variant="light"
+                            color={overTarget ? 'red' : 'emerald'}
+                            leftSection={
+                              overTarget ? (
+                                <IconAlertTriangle size={10} />
+                              ) : (
+                                <IconTarget size={10} />
+                              )
+                            }
+                            styles={{ root: { textTransform: 'none' } }}
+                          >
+                            {overTarget ? 'חריגה · % מהיעד' : '% מהיעד'}
+                          </Badge>
+                          <Text
+                            fz={11}
+                            fw={600}
+                            c={overTarget ? COLORS.expense : COLORS.textSecondary}
+                            style={{ whiteSpace: 'nowrap' }}
+                          >
+                            {overTarget
+                              ? formatPercent(ratio)
+                              : `${formatPercent(ratio)} · נותר ${formatCurrency(Math.max(target - item.amount, 0))}`}
+                          </Text>
+                        </Group>
+                      </>
+                    ) : (
+                      <Group gap={6} mt={4} justify="space-between" wrap="nowrap">
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color="gray"
+                          leftSection={<IconChartPie size={10} />}
+                          styles={{ root: { textTransform: 'none' } }}
+                        >
+                          % מסך ההוצאות
+                        </Badge>
+                        <Text fz={11} fw={600} c={COLORS.textSecondary}>
+                          {formatPercent(item.percentage)}
+                        </Text>
+                      </Group>
                     )}
                   </Box>
                 );

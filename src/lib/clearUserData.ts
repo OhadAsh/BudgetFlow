@@ -4,7 +4,8 @@ import { useSettingsStore } from '../store/useSettingsStore';
 
 /**
  * Wipes every user-owned artifact from the app: expense months, selected
- * period, OpenRouter API key, Google OAuth client ID, and the cached daily insight.
+ * period, OpenRouter API key, Google OAuth client ID, local backup settings,
+ * and the cached daily insight.
  */
 export function clearAllUserData(): void {
   useExpenseStore.getState().clearAll();

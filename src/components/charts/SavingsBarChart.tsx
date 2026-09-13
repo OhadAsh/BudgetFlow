@@ -1,4 +1,4 @@
-import { Box, Card, Stack, Text } from '@mantine/core';
+import { Box, Card, Group, Stack, Text } from '@mantine/core';
 import {
   Bar,
   BarChart,
@@ -14,6 +14,7 @@ import { COLORS, HEBREW_MONTHS, SECTION_TITLE_STYLE } from '../../lib/constants'
 import { formatCompactCurrency, formatCurrency } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { useMonthData } from '../../hooks/useMonthData';
+import { ExcludeOutliersToggle } from '../month/ExcludeOutliersToggle';
 
 interface TooltipEntry {
   payload?: MonthlySeriesPoint;
@@ -31,7 +32,7 @@ function SavingsTooltip({ active, payload }: SavingsTooltipProps): JSX.Element |
   return (
     <Box
       p="xs"
-      bg="#FFFFFF"
+      bg={COLORS.tooltipBg}
       style={{
         borderRadius: 12,
         boxShadow: '0 4px 16px rgba(15, 23, 42, 0.12)',
@@ -52,7 +53,7 @@ function SavingsTooltip({ active, payload }: SavingsTooltipProps): JSX.Element |
         </>
       ) : (
         <Text fz="xs" c={COLORS.textSecondary}>
-          אין נתונים
+          {point.isOutlier ? 'חודש חריג (מוחרג מהגרף)' : 'אין נתונים'}
         </Text>
       )}
     </Box>
@@ -74,7 +75,10 @@ export function SavingsBarChart(): JSX.Element {
   return (
     <Card>
       <Stack gap="sm">
-        <Text style={SECTION_TITLE_STYLE}>חיסכון לאורך השנה</Text>
+        <Group justify="space-between" align="center" wrap="wrap">
+          <Text style={SECTION_TITLE_STYLE}>חיסכון לאורך השנה</Text>
+          <ExcludeOutliersToggle compact />
+        </Group>
         <Box style={{ width: '100%', height: 260 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart

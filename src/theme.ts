@@ -21,6 +21,7 @@ export const theme = createTheme({
   headings: { fontFamily: 'Heebo, Inter, sans-serif', fontWeight: '700' },
   fontSizes: { sm: '0.875rem', md: '0.9375rem' },
   black: '#1E293B',
+  white: '#ffffff',
   components: {
     Card: {
       defaultProps: {
@@ -28,11 +29,11 @@ export const theme = createTheme({
         radius: 'lg',
         withBorder: false,
         padding: 'lg',
-        bg: '#FFFFFF',
+        bg: 'var(--bf-card-bg)',
       },
     },
     Button: { defaultProps: { radius: 'xl' } },
-    Paper: { defaultProps: { radius: 'lg' } },
+    Paper: { defaultProps: { radius: 'lg', bg: 'var(--bf-card-bg)' } },
     Badge: { defaultProps: { radius: 'sm' } },
     Modal: { defaultProps: { radius: 'lg', centered: true } },
     Tooltip: { defaultProps: { radius: 'md' } },

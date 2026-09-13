@@ -126,16 +126,21 @@ export const SAVINGS_RATE_THRESHOLDS = {
 };
 
 export const COLORS = {
-  pageBg: '#F8FAFC',
-  cardBg: '#FFFFFF',
+  /** Theme-aware via CSS variables — follow data-mantine-color-scheme. */
+  pageBg: 'var(--bf-page-bg)',
+  cardBg: 'var(--bf-card-bg)',
+  mutedBg: 'var(--bf-muted-bg)',
+  successBg: 'var(--bf-success-bg)',
+  dangerBg: 'var(--bf-danger-bg)',
+  tooltipBg: 'var(--bf-tooltip-bg)',
   primary: '#10B981',
   income: '#10B981',
   expense: '#EF4444',
-  textPrimary: '#1E293B',
-  textSecondary: '#64748B',
-  border: '#E2E8F0',
+  textPrimary: 'var(--bf-text-primary)',
+  textSecondary: 'var(--bf-text-secondary)',
+  border: 'var(--bf-border)',
   amber: '#F59E0B',
-  ghost: '#E2E8F0',
+  ghost: 'var(--bf-ghost)',
 } as const;
 
 export const SECTION_TITLE_STYLE = {

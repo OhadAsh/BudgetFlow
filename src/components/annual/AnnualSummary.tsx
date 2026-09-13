@@ -25,6 +25,7 @@ import { calcSavingsRate } from '../../lib/calculations';
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { useMonthData } from '../../hooks/useMonthData';
 import { YearSelector } from './YearSelector';
+import { ExcludeOutliersToggle } from '../month/ExcludeOutliersToggle';
 
 interface StatCardProps {
   title: string;
@@ -52,13 +53,16 @@ function StatCard({ title, value, color, hint }: StatCardProps): JSX.Element {
 }
 
 export function AnnualSummary(): JSX.Element {
-  const { annualStats, monthlySeries, year, month } = useMonthData();
+  const { annualStats, monthlySeriesRaw, year, month, excludeOutliersFromStats } = useMonthData();
   const setSelectedPeriod = useExpenseStore((state) => state.setSelectedPeriod);
   const deleteYear = useExpenseStore((state) => state.deleteYear);
   const months = useExpenseStore((state) => state.months);
   const [confirmDeleteYear, setConfirmDeleteYear] = useState<boolean>(false);
 
-  const activeMonths = monthlySeries.filter((point) => point.hasData).length;
+  const activeMonths = monthlySeriesRaw.filter(
+    (point) =>
+      point.hasData && !(excludeOutliersFromStats && point.isOutlier)
+  ).length;
   const annualRate = calcSavingsRate(annualStats.totalSaved, annualStats.totalIncome);
   const yearHasAnyData = months.some(
     (entry) => entry.year === year && (entry.income.length > 0 || entry.expenses.length > 0)
@@ -76,9 +80,10 @@ export function AnnualSummary(): JSX.Element {
 
   return (
     <Stack gap="md">
-      <Group justify="space-between" align="center">
+      <Group justify="space-between" align="center" wrap="wrap">
         <Text style={SECTION_TITLE_STYLE}>📅 סיכום שנתי</Text>
-        <Group gap="xs">
+        <Group gap="xs" wrap="wrap">
+          <ExcludeOutliersToggle />
           <YearSelector />
           <ActionIcon
             variant="subtle"
@@ -139,12 +144,16 @@ export function AnnualSummary(): JSX.Element {
           title="ממוצע חודשי"
           value={annualStats.avgMonthlySavings}
           color={annualStats.avgMonthlySavings >= 0 ? COLORS.income : COLORS.expense}
-          hint="חיסכון ממוצע לחודש פעיל"
+          hint={
+            excludeOutliersFromStats
+              ? 'חיסכון ממוצע לחודש פעיל (ללא חריגים)'
+              : 'חיסכון ממוצע לחודש פעיל'
+          }
         />
       </SimpleGrid>
 
       <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="md">
-        <Card bg="#ECFDF5">
+        <Card bg={COLORS.successBg}>
           <Group gap="sm" wrap="nowrap">
             <IconTrophy size={30} color={COLORS.income} />
             <Stack gap={0}>
@@ -161,7 +170,7 @@ export function AnnualSummary(): JSX.Element {
           </Group>
         </Card>
 
-        <Card bg="#FEF2F2">
+        <Card bg={COLORS.dangerBg}>
           <Group gap="sm" wrap="nowrap">
             <IconMoodSad size={30} color={COLORS.expense} />
             <Stack gap={0}>
@@ -196,27 +205,43 @@ export function AnnualSummary(): JSX.Element {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {monthlySeries.map((point) => {
+                {monthlySeriesRaw.map((point) => {
                   const rate = calcSavingsRate(point.saved, point.income);
                   const isSelected = point.month === month;
+                  const excluded =
+                    excludeOutliersFromStats && point.isOutlier && point.hasData;
 
                   return (
                     <Table.Tr
                       key={point.month}
-                      bg={isSelected ? '#F1F5F9' : point.hasData ? undefined : '#FCFDFE'}
+                      bg={
+                        isSelected
+                          ? COLORS.mutedBg
+                          : point.hasData
+                            ? undefined
+                            : COLORS.pageBg
+                      }
+                      opacity={excluded ? 0.55 : 1}
                     >
                       <Table.Td>
-                        <UnstyledButton
-                          onClick={() => setSelectedPeriod(year, point.month)}
-                          aria-label={`מעבר ל${getMonthName(point.month)} ${year}`}
-                          style={{
-                            fontSize: 14,
-                            fontWeight: isSelected ? 700 : 500,
-                            color: point.hasData ? COLORS.textPrimary : COLORS.textSecondary,
-                          }}
-                        >
-                          {getMonthName(point.month)}
-                        </UnstyledButton>
+                        <Group gap={6} wrap="nowrap">
+                          <UnstyledButton
+                            onClick={() => setSelectedPeriod(year, point.month)}
+                            aria-label={`מעבר ל${getMonthName(point.month)} ${year}`}
+                            style={{
+                              fontSize: 14,
+                              fontWeight: isSelected ? 700 : 500,
+                              color: point.hasData ? COLORS.textPrimary : COLORS.textSecondary,
+                            }}
+                          >
+                            {getMonthName(point.month)}
+                          </UnstyledButton>
+                          {point.isOutlier && (
+                            <Badge color="orange" variant="light" size="xs">
+                              חריג
+                            </Badge>
+                          )}
+                        </Group>
                       </Table.Td>
                       <Table.Td>
                         <Text fz="sm" c={point.hasData ? COLORS.income : COLORS.textSecondary}>

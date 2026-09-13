@@ -12,6 +12,16 @@ import type {
 import { CATEGORIES, SAVINGS_CATEGORY } from './constants';
 import { clampMonth, getShortMonthName, resolveCategoryMeta } from './utils';
 
+/** Options for year-level aggregations and chart series. */
+export interface AggregationOptions {
+  /**
+   * When true, months with `isOutlier` are omitted from totals, averages,
+   * best/worst, and chart values (treated as empty for aggregation).
+   * Default false — preserves legacy behaviour when callers omit the flag.
+   */
+  excludeOutliers?: boolean;
+}
+
 export function emptyCategoryRecord(): Record<CategoryType, number> {
   return CATEGORIES.reduce<Record<CategoryType, number>>((acc, category) => {
     acc[category] = 0;
@@ -61,6 +71,10 @@ export function calcSavingsRate(netSaved: number, totalIncome: number): number {
   // Overspending → 0% (not absurd negatives like -32000% on tiny income).
   if (!Number.isFinite(rate) || rate < 0) return 0;
   return rate;
+}
+
+export function isMonthOutlier(month: MonthData | undefined): boolean {
+  return month?.isOutlier === true;
 }
 
 export function findMonth(
@@ -124,33 +138,54 @@ export function getCategoryBreakdown(
     .sort((a, b) => b.amount - a.amount);
 }
 
-/** 12-point series for a year — months with no data are zeroed but flagged. */
-export function getMonthlySeries(months: MonthData[], year: number): MonthlySeriesPoint[] {
+/**
+ * 12-point series for a year — months with no data are zeroed but flagged.
+ * When `excludeOutliers` is true, outlier months are zeroed and `hasData` is false
+ * so charts and annual aggregates skip them.
+ */
+export function getMonthlySeries(
+  months: MonthData[],
+  year: number,
+  options: AggregationOptions = {}
+): MonthlySeriesPoint[] {
+  const excludeOutliers = options.excludeOutliers === true;
+
   return Array.from({ length: 12 }, (_, index) => {
     const monthNumber = index + 1;
-    const stats = getMonthStats(findMonth(months, year, monthNumber));
+    const monthData = findMonth(months, year, monthNumber);
+    const stats = getMonthStats(monthData);
+    const outlier = isMonthOutlier(monthData);
+    const excluded = excludeOutliers && outlier;
+
     return {
       month: monthNumber,
       label: getShortMonthName(monthNumber),
-      income: stats.totalIncome,
-      expenses: stats.totalExpenses,
-      saved: stats.hasData ? stats.netSaved : 0,
-      hasData: stats.hasData,
+      income: excluded ? 0 : stats.totalIncome,
+      expenses: excluded ? 0 : stats.totalExpenses,
+      saved: excluded || !stats.hasData ? 0 : stats.netSaved,
+      hasData: excluded ? false : stats.hasData,
+      isOutlier: outlier,
     };
   });
 }
 
-export function getAnnualStats(months: MonthData[], year: number): AnnualStats {
-  const series = getMonthlySeries(months, year);
+export function getAnnualStats(
+  months: MonthData[],
+  year: number,
+  options: AggregationOptions = {}
+): AnnualStats {
+  const series = getMonthlySeries(months, year, options);
   const monthsWithData = series.filter((point) => point.hasData);
 
   const totalIncome = series.reduce((total, point) => total + point.income, 0);
   const totalExpenses = series.reduce((total, point) => total + point.expenses, 0);
   const totalSaved = calcNetSaved(totalIncome, totalExpenses);
 
+  const excludeOutliers = options.excludeOutliers === true;
   const byCategory = emptyCategoryRecord();
   months
     .filter((month) => month.year === year)
+    .filter((month) => !(excludeOutliers && isMonthOutlier(month)))
     .forEach((month) => {
       month.expenses.forEach((expense) => {
         const key = expense.category.trim().length > 0 ? expense.category : 'אחר';

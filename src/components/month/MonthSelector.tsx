@@ -4,10 +4,11 @@ import { HEBREW_MONTHS, SHORT_MONTHS, COLORS } from '../../lib/constants';
 import { formatMonthYear, nextPeriod, previousPeriod } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { useMonthData } from '../../hooks/useMonthData';
+import { OutlierMonthControls } from './OutlierMonthControls';
 
 export function MonthSelector(): JSX.Element {
   const setSelectedPeriod = useExpenseStore((state) => state.setSelectedPeriod);
-  const { year, month, monthsWithData, stats } = useMonthData();
+  const { year, month, monthsWithData, outlierMonths, stats } = useMonthData();
 
   const goPrevious = (): void => {
     const target = previousPeriod(year, month);
@@ -75,14 +76,15 @@ export function MonthSelector(): JSX.Element {
             const monthNumber = index + 1;
             const isActive = monthNumber === month;
             const hasData = monthsWithData.includes(monthNumber);
+            const isOutlier = outlierMonths.includes(monthNumber);
             const shortName = SHORT_MONTHS[index];
 
             return (
               <Indicator
                 key={name}
                 w="100%"
-                disabled={!hasData || isActive}
-                color="emerald"
+                disabled={(!hasData && !isOutlier) || isActive}
+                color={isOutlier ? 'orange' : 'emerald'}
                 size={6}
                 offset={4}
                 position="top-end"
@@ -90,9 +92,9 @@ export function MonthSelector(): JSX.Element {
               >
                 <UnstyledButton
                   onClick={() => setSelectedPeriod(year, monthNumber)}
-                  aria-label={`${name} ${year}`}
+                  aria-label={`${name} ${year}${isOutlier ? ' (חריג)' : ''}`}
                   aria-pressed={isActive}
-                  title={name}
+                  title={isOutlier ? `${name} · חודש חריג` : name}
                   style={{
                     width: '100%',
                     minWidth: 0,
@@ -102,7 +104,11 @@ export function MonthSelector(): JSX.Element {
                     fontSize: 12,
                     fontWeight: isActive ? 700 : 500,
                     color: isActive ? '#FFFFFF' : COLORS.textSecondary,
-                    backgroundColor: isActive ? COLORS.primary : '#F1F5F9',
+                    backgroundColor: isActive
+                      ? isOutlier
+                        ? COLORS.amber
+                        : COLORS.primary
+                      : COLORS.mutedBg,
                     transition: 'background-color 150ms ease, color 150ms ease',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -115,6 +121,8 @@ export function MonthSelector(): JSX.Element {
             );
           })}
         </Box>
+
+        <OutlierMonthControls />
       </Stack>
     </Card>
   );

@@ -14,6 +14,8 @@ import { SavingsBarChart } from './components/charts/SavingsBarChart';
 import { TrendLineChart } from './components/charts/TrendLineChart';
 import { AnnualSummary } from './components/annual/AnnualSummary';
 import { DailyInsightBubble } from './components/insights/DailyInsightBubble';
+import { LocalStorageQuotaBanner } from './components/excel/LocalDataBackup';
+import { LocalDataResilienceProvider } from './components/excel/LocalDataResilienceProvider';
 
 export default function App(): JSX.Element {
   // Resolved on first render so the desktop grid never flashes the mobile layout.
@@ -23,69 +25,72 @@ export default function App(): JSX.Element {
   const [tab, setTab] = useState<ViewTab>('overview');
 
   return (
-    <Box bg={COLORS.pageBg} mih="100vh">
-      <Box style={{ position: 'sticky', top: 0, zIndex: 150 }}>
-        <Header />
-      </Box>
+    <LocalDataResilienceProvider>
+      <Box bg={COLORS.pageBg} mih="100vh">
+        <Box style={{ position: 'sticky', top: 0, zIndex: 150 }}>
+          <Header />
+          <LocalStorageQuotaBanner />
+        </Box>
 
-      <Container
-        size="xl"
-        px={{ base: 'sm', sm: 'lg' }}
-        py="md"
-        pb={isDesktop ? 'xl' : 96}
-        style={{ overflowX: 'clip', maxWidth: '100%' }}
-      >
-        {isDesktop ? (
-          <Stack gap="lg">
-            <MonthlySummary />
+        <Container
+          size="xl"
+          px={{ base: 'sm', sm: 'lg' }}
+          py="md"
+          pb={isDesktop ? 'xl' : 96}
+          style={{ overflowX: 'clip', maxWidth: '100%' }}
+        >
+          {isDesktop ? (
+            <Stack gap="lg">
+              <MonthlySummary />
 
-            <Grid gutter="md" align="stretch" styles={{ inner: { width: '100%' } }}>
-              <Grid.Col span={5} style={{ minWidth: 0, maxWidth: '100%' }}>
-                <Stack gap="md" style={{ minWidth: 0 }}>
+              <Grid gutter="md" align="stretch" styles={{ inner: { width: '100%' } }}>
+                <Grid.Col span={5} style={{ minWidth: 0, maxWidth: '100%' }}>
+                  <Stack gap="md" style={{ minWidth: 0 }}>
+                    <MonthSelector />
+                    <IncomeSection />
+                    <ExpenseTable />
+                  </Stack>
+                </Grid.Col>
+                <Grid.Col span={7} style={{ minWidth: 0, maxWidth: '100%' }}>
+                  <Stack gap="md" style={{ minWidth: 0 }}>
+                    <CategoryPieChart />
+                    <SavingsBarChart />
+                    <TrendLineChart />
+                  </Stack>
+                </Grid.Col>
+              </Grid>
+
+              <Divider color={COLORS.border} />
+              <AnnualSummary />
+            </Stack>
+          ) : (
+            <Stack gap="md">
+              {tab === 'overview' && (
+                <>
                   <MonthSelector />
-                  <IncomeSection />
-                  <ExpenseTable />
-                </Stack>
-              </Grid.Col>
-              <Grid.Col span={7} style={{ minWidth: 0, maxWidth: '100%' }}>
-                <Stack gap="md" style={{ minWidth: 0 }}>
+                  <MonthlySummary />
                   <CategoryPieChart />
                   <SavingsBarChart />
                   <TrendLineChart />
-                </Stack>
-              </Grid.Col>
-            </Grid>
+                </>
+              )}
 
-            <Divider color={COLORS.border} />
-            <AnnualSummary />
-          </Stack>
-        ) : (
-          <Stack gap="md">
-            {tab === 'overview' && (
-              <>
-                <MonthSelector />
-                <MonthlySummary />
-                <CategoryPieChart />
-                <SavingsBarChart />
-                <TrendLineChart />
-              </>
-            )}
+              {tab === 'expenses' && (
+                <>
+                  <MonthSelector />
+                  <IncomeSection />
+                  <ExpenseTable />
+                </>
+              )}
 
-            {tab === 'expenses' && (
-              <>
-                <MonthSelector />
-                <IncomeSection />
-                <ExpenseTable />
-              </>
-            )}
+              {tab === 'annual' && <AnnualSummary />}
+            </Stack>
+          )}
+        </Container>
 
-            {tab === 'annual' && <AnnualSummary />}
-          </Stack>
-        )}
-      </Container>
-
-      <BottomNav value={tab} onChange={setTab} />
-      <DailyInsightBubble />
-    </Box>
+        <BottomNav value={tab} onChange={setTab} />
+        <DailyInsightBubble />
+      </Box>
+    </LocalDataResilienceProvider>
   );
 }

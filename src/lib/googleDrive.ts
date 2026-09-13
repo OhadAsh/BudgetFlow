@@ -250,6 +250,10 @@ function parseMonth(value: unknown): MonthData | null {
     month: value.month,
     income,
     expenses,
+    ...(value.isOutlier === true ? { isOutlier: true as const } : {}),
+    ...(typeof value.outlierNote === 'string' && value.outlierNote.trim().length > 0
+      ? { outlierNote: value.outlierNote.trim() }
+      : {}),
   };
 }
 

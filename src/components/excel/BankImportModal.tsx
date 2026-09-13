@@ -69,6 +69,10 @@ export type BankImportMode = 'card' | 'bank';
 
 interface BankImportModalProps {
   mode: BankImportMode;
+  /** When true, no toolbar button is rendered — open via `opened` / `onOpenedChange`. */
+  hideTrigger?: boolean;
+  opened?: boolean;
+  onOpenedChange?: (opened: boolean) => void;
 }
 
 function errorMessage(error: unknown): string {
@@ -141,7 +145,12 @@ function matchingMerchantIds(
     .map((row) => row.id);
 }
 
-export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
+export function BankImportModal({
+  mode,
+  hideTrigger = false,
+  opened: openedProp,
+  onOpenedChange,
+}: BankImportModalProps): JSX.Element {
   const months = useExpenseStore((state) => state.months);
   const addExpense = useExpenseStore((state) => state.addExpense);
   const addIncome = useExpenseStore((state) => state.addIncome);
@@ -151,7 +160,15 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
   const merchantMemory = useExpenseStore((state) => state.merchantMemory);
   const rememberMerchant = useExpenseStore((state) => state.rememberMerchant);
 
-  const [opened, setOpened] = useState<boolean>(false);
+  const [uncontrolledOpened, setUncontrolledOpened] = useState<boolean>(false);
+  const isControlled = openedProp !== undefined;
+  const opened = isControlled ? openedProp : uncontrolledOpened;
+  const setOpened = (next: boolean): void => {
+    if (!isControlled) {
+      setUncontrolledOpened(next);
+    }
+    onOpenedChange?.(next);
+  };
   const [loading, setLoading] = useState<boolean>(false);
   const [unknownFormat, setUnknownFormat] = useState<boolean>(false);
   const [cardResult, setCardResult] = useState<BankImportResult | null>(null);
@@ -767,31 +784,32 @@ export function BankImportModal({ mode }: BankImportModalProps): JSX.Element {
 
   return (
     <>
-      {mode === 'bank' ? (
-        <Button
-          variant="light"
-          color="grape"
-          size="xs"
-          radius="xl"
-          leftSection={<IconBuildingBank size={16} />}
-          onClick={() => setOpened(true)}
-          aria-label="ייבוא עו״ש מחשבון הבנק"
-        >
-          ייבוא בנק 🏦
-        </Button>
-      ) : (
-        <Button
-          variant="light"
-          color="indigo"
-          size="xs"
-          radius="xl"
-          leftSection={<IconCreditCard size={16} />}
-          onClick={() => setOpened(true)}
-          aria-label="ייבוא עסקאות מכרטיס אשראי"
-        >
-          ייבוא עסקאות 💳
-        </Button>
-      )}
+      {!hideTrigger &&
+        (mode === 'bank' ? (
+          <Button
+            variant="light"
+            color="grape"
+            size="xs"
+            radius="xl"
+            leftSection={<IconBuildingBank size={16} />}
+            onClick={() => setOpened(true)}
+            aria-label="ייבוא עו״ש מחשבון הבנק"
+          >
+            ייבוא בנק 🏦
+          </Button>
+        ) : (
+          <Button
+            variant="light"
+            color="indigo"
+            size="xs"
+            radius="xl"
+            leftSection={<IconCreditCard size={16} />}
+            onClick={() => setOpened(true)}
+            aria-label="ייבוא עסקאות מכרטיס אשראי"
+          >
+            ייבוא עסקאות 💳
+          </Button>
+        ))}
 
       <Modal
         opened={opened}

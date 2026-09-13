@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type CSSProperties } from 'react';
 import {
   Badge,
   Box,
@@ -6,6 +6,7 @@ import {
   Card,
   Divider,
   Group,
+  ScrollArea,
   Stack,
   Table,
   Text,
@@ -19,6 +20,17 @@ import { formatCurrency, matchesSearchQuery, resolveCategoryMeta, todayISO } fro
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { useMonthData } from '../../hooks/useMonthData';
 import { ExpenseRow } from './ExpenseRow';
+
+/** Relative list viewport — scales with the screen; scrolls only the expense rows. */
+const EXPENSE_LIST_HEIGHT = 'min(75vh, 900px)';
+
+const stickyHeaderCellStyle: CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 3,
+  backgroundColor: COLORS.cardBg,
+  boxShadow: `inset 0 -1px 0 ${COLORS.border}`,
+};
 
 export function ExpenseTable(): JSX.Element {
   const { year, month, monthData, stats } = useMonthData();
@@ -53,7 +65,7 @@ export function ExpenseTable(): JSX.Element {
   const hasExpenses = monthData.expenses.length > 0;
 
   return (
-    <Card style={{ overflow: 'hidden' }}>
+    <Card>
       <Stack gap="sm" style={{ minWidth: 0 }}>
         <Group justify="space-between" align="center" wrap="wrap" gap="sm">
           <Text style={{ ...SECTION_TITLE_STYLE, minWidth: 0 }} truncate>
@@ -99,80 +111,97 @@ export function ExpenseTable(): JSX.Element {
             לא נמצאו הוצאות מתאימות לחיפוש
           </Text>
         ) : (
-          <Table.ScrollContainer minWidth={520} type="native">
-            <Table verticalSpacing="xs" horizontalSpacing="xs" highlightOnHover>
+          <ScrollArea
+            h={EXPENSE_LIST_HEIGHT}
+            type="auto"
+            offsetScrollbars
+            scrollbars="y"
+            aria-label="רשימת הוצאות"
+            styles={{
+              viewport: {
+                paddingBottom: 12,
+              },
+            }}
+          >
+            <Table verticalSpacing="xs" horizontalSpacing="xs" highlightOnHover miw={520}>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600, width: 130 }}>
+                  <Table.Th style={{ ...stickyHeaderCellStyle, width: 130, color: COLORS.textSecondary, fontWeight: 600 }}>
                     קטגוריה
                   </Table.Th>
-                  <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600, width: 88 }}>
+                  <Table.Th style={{ ...stickyHeaderCellStyle, width: 88, color: COLORS.textSecondary, fontWeight: 600 }}>
                     תאריך
                   </Table.Th>
-                  <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600 }}>תיאור</Table.Th>
-                  <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600, width: 100 }}>
+                  <Table.Th style={{ ...stickyHeaderCellStyle, color: COLORS.textSecondary, fontWeight: 600 }}>
+                    תיאור
+                  </Table.Th>
+                  <Table.Th style={{ ...stickyHeaderCellStyle, width: 100, color: COLORS.textSecondary, fontWeight: 600 }}>
                     מקור
                   </Table.Th>
-                  <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600, width: 110 }}>
+                  <Table.Th style={{ ...stickyHeaderCellStyle, width: 110, color: COLORS.textSecondary, fontWeight: 600 }}>
                     סכום
                   </Table.Th>
-                  <Table.Th style={{ width: 44 }} />
+                  <Table.Th style={{ ...stickyHeaderCellStyle, width: 44 }} />
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {grouped
                   ? groups.map((group) => (
-                      <Fragment key={`group-${group.category}`}>
-                        <Table.Tr bg="#F8FAFC">
-                          <Table.Td colSpan={4}>
-                            {(() => {
-                              const meta = resolveCategoryMeta(group.category, customCategories);
-                              return (
-                            <Badge
-                              variant="light"
-                              radius="sm"
-                              styles={{
-                                root: {
-                                  backgroundColor: `${meta.color}1A`,
-                                  color: meta.color,
-                                  textTransform: 'none',
-                                  fontWeight: 700,
-                                },
-                              }}
-                            >
-                              {`${meta.emoji} ${group.category} · ${group.expenses.length}`}
-                            </Badge>
-                              );
-                            })()}
-                          </Table.Td>
-                          <Table.Td>
-                            <Text
-                              fw={700}
-                              fz="sm"
-                              c={group.total < 0 ? COLORS.income : COLORS.textPrimary}
-                              style={{ direction: 'ltr', unicodeBidi: 'isolate', whiteSpace: 'nowrap' }}
-                            >
-                              {formatCurrency(group.total)}
-                            </Text>
-                          </Table.Td>
-                          <Table.Td />
-                        </Table.Tr>
-                        {group.expenses.map((expense) => (
-                          <ExpenseRow
-                            key={expense.id}
-                            expense={expense}
-                            year={year}
-                            month={month}
-                          />
-                        ))}
-                      </Fragment>
-                    ))
+                    <Fragment key={`group-${group.category}`}>
+                      <Table.Tr bg={COLORS.pageBg}>
+                        <Table.Td colSpan={4}>
+                          {(() => {
+                            const meta = resolveCategoryMeta(group.category, customCategories);
+                            return (
+                              <Badge
+                                variant="light"
+                                radius="sm"
+                                styles={{
+                                  root: {
+                                    backgroundColor: `${meta.color}1A`,
+                                    color: meta.color,
+                                    textTransform: 'none',
+                                    fontWeight: 700,
+                                  },
+                                }}
+                              >
+                                {`${meta.emoji} ${group.category} · ${group.expenses.length}`}
+                              </Badge>
+                            );
+                          })()}
+                        </Table.Td>
+                        <Table.Td>
+                          <Text
+                            fw={700}
+                            fz="sm"
+                            c={group.total < 0 ? COLORS.income : COLORS.textPrimary}
+                            style={{
+                              direction: 'ltr',
+                              unicodeBidi: 'isolate',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {formatCurrency(group.total)}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td />
+                      </Table.Tr>
+                      {group.expenses.map((expense) => (
+                        <ExpenseRow
+                          key={expense.id}
+                          expense={expense}
+                          year={year}
+                          month={month}
+                        />
+                      ))}
+                    </Fragment>
+                  ))
                   : sorted.map((expense) => (
-                      <ExpenseRow key={expense.id} expense={expense} year={year} month={month} />
-                    ))}
+                    <ExpenseRow key={expense.id} expense={expense} year={year} month={month} />
+                  ))}
               </Table.Tbody>
             </Table>
-          </Table.ScrollContainer>
+          </ScrollArea>
         )}
 
         <Divider color={COLORS.border} />

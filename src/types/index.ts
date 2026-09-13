@@ -68,6 +68,13 @@ export interface MonthData {
   month: number; // 1-12
   income: IncomeSource[];
   expenses: Expense[];
+  /**
+   * When true, annual averages / best-worst / trend aggregations may ignore this month
+   * (controlled by the "exclude outliers" toggle).
+   */
+  isOutlier?: boolean;
+  /** Optional free-text reason, e.g. "חתונה" / "אירוע חד-פעמי". */
+  outlierNote?: string;
 }
 
 export interface MonthStats {
@@ -110,6 +117,8 @@ export interface MonthlySeriesPoint {
   expenses: number;
   saved: number;
   hasData: boolean;
+  /** True when the underlying month is tagged as a one-off / outlier. */
+  isOutlier: boolean;
 }
 
 export type ViewTab = 'overview' | 'expenses' | 'annual';

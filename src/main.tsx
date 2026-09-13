@@ -7,6 +7,7 @@ import '@mantine/notifications/styles.css';
 import './index.css';
 import App from './App';
 import { theme } from './theme';
+import { ColorSchemeSync } from './components/layout/ColorSchemeSync';
 
 const container = document.getElementById('root');
 if (!container) {
@@ -23,7 +24,8 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 createRoot(container).render(
   <StrictMode>
     <DirectionProvider initialDirection="rtl" detectDirection={false}>
-      <MantineProvider theme={theme} defaultColorScheme="light" forceColorScheme="light">
+      <MantineProvider theme={theme} defaultColorScheme="auto">
+        <ColorSchemeSync />
         <Notifications position="top-center" limit={3} />
         <App />
       </MantineProvider>

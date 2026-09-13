@@ -1,5 +1,29 @@
 :root {
   color-scheme: light;
+  --bf-page-bg: #f8fafc;
+  --bf-card-bg: #ffffff;
+  --bf-muted-bg: #f1f5f9;
+  --bf-success-bg: #ecfdf5;
+  --bf-danger-bg: #fef2f2;
+  --bf-tooltip-bg: #ffffff;
+  --bf-text-primary: #1e293b;
+  --bf-text-secondary: #64748b;
+  --bf-border: #e2e8f0;
+  --bf-ghost: #e2e8f0;
+}
+
+:root[data-mantine-color-scheme='dark'] {
+  color-scheme: dark;
+  --bf-page-bg: #0b1220;
+  --bf-card-bg: #111827;
+  --bf-muted-bg: #1e293b;
+  --bf-success-bg: #052e1c;
+  --bf-danger-bg: #3f1219;
+  --bf-tooltip-bg: #1e293b;
+  --bf-text-primary: #f1f5f9;
+  --bf-text-secondary: #94a3b8;
+  --bf-border: #334155;
+  --bf-ghost: #334155;
 }
 
 * {
@@ -10,8 +34,8 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background-color: #f8fafc;
-  color: #1e293b;
+  background-color: var(--bf-page-bg);
+  color: var(--bf-text-primary);
   font-family: Heebo, Inter, sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;

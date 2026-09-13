@@ -1,5 +1,15 @@
 import { useState } from 'react';
-import { ActionIcon, Button, Group, Loader, Modal, Stack, Text, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Button,
+  Group,
+  Loader,
+  Modal,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
   IconBrandGoogleDrive,
@@ -21,6 +31,8 @@ import { GoogleClientIdModal } from './GoogleClientIdModal';
 
 interface GoogleDriveBackupProps {
   compact?: boolean;
+  /** Stacked layout for the settings panel (no separate gear icon). */
+  embedded?: boolean;
 }
 
 function errorMessage(error: unknown): string {
@@ -41,7 +53,10 @@ function errorMessage(error: unknown): string {
   return 'אירעה שגיאה לא צפויה. נסה שוב.';
 }
 
-export function GoogleDriveBackup({ compact = false }: GoogleDriveBackupProps): JSX.Element {
+export function GoogleDriveBackup({
+  compact = false,
+  embedded = false,
+}: GoogleDriveBackupProps): JSX.Element {
   const restoreFromBackup = useExpenseStore((state) => state.restoreFromBackup);
   const {
     isReady,
@@ -156,6 +171,11 @@ export function GoogleDriveBackup({ compact = false }: GoogleDriveBackupProps): 
     }
   };
 
+  const openClientIdSettings = (): void => {
+    setConnectAfterSave(false);
+    setClientIdOpened(true);
+  };
+
   const settingsButton = (
     <Tooltip label="הגדרת Google Client ID" withArrow>
       <ActionIcon
@@ -163,10 +183,7 @@ export function GoogleDriveBackup({ compact = false }: GoogleDriveBackupProps): 
         color="gray"
         size={compact ? 'sm' : 'md'}
         radius="xl"
-        onClick={() => {
-          setConnectAfterSave(false);
-          setClientIdOpened(true);
-        }}
+        onClick={openClientIdSettings}
         aria-label="הגדרת Google Client ID"
       >
         <IconSettings size={16} />
@@ -174,78 +191,108 @@ export function GoogleDriveBackup({ compact = false }: GoogleDriveBackupProps): 
     </Tooltip>
   );
 
+  const statusBadge = (
+    <Badge color={isConnected ? 'emerald' : 'gray'} variant="light" radius="sm">
+      {isConnected ? 'מחובר' : 'לא מחובר'}
+    </Badge>
+  );
+
+  const controls = !isConnected ? (
+    <Group gap={4} wrap="wrap">
+      <Button
+        variant="light"
+        color="blue"
+        size={size}
+        radius="xl"
+        leftSection={
+          isConnecting || isLoadingScript ? (
+            <Loader size={14} color="blue" />
+          ) : (
+            <IconBrandGoogleDrive size={16} />
+          )
+        }
+        onClick={handleSignInClick}
+        disabled={!isReady || isConnecting || isLoadingScript}
+        aria-label="התחבר ל-Google Drive"
+      >
+        התחבר ל-Google Drive
+      </Button>
+      {!embedded && settingsButton}
+      {embedded && (
+        <Button variant="subtle" color="gray" size={size} radius="xl" onClick={openClientIdSettings}>
+          הגדרת Client ID
+        </Button>
+      )}
+    </Group>
+  ) : (
+    <Group gap="xs" wrap="wrap">
+      <Button
+        variant="light"
+        color="emerald"
+        size={size}
+        radius="xl"
+        leftSection={
+          isBusy ? <Loader size={14} color="emerald" /> : <IconCloudUpload size={16} />
+        }
+        onClick={() => {
+          void handleBackup();
+        }}
+        disabled={isBusy}
+        aria-label="גבה עכשיו ל-Google Drive"
+      >
+        גבה עכשיו
+      </Button>
+      <Button
+        variant="light"
+        color="blue"
+        size={size}
+        radius="xl"
+        leftSection={
+          isBusy ? <Loader size={14} color="blue" /> : <IconCloudDownload size={16} />
+        }
+        onClick={() => setConfirmRestore(true)}
+        disabled={isBusy}
+        aria-label="שחזר מגיבוי Google Drive"
+      >
+        שחזר מגיבוי
+      </Button>
+      <Button
+        variant="subtle"
+        color="gray"
+        size={size}
+        radius="xl"
+        leftSection={<IconLogout size={16} />}
+        onClick={() => {
+          void handleSignOut();
+        }}
+        disabled={isBusy}
+        aria-label="התנתק מ-Google Drive"
+      >
+        התנתק
+      </Button>
+      {!embedded && settingsButton}
+      {embedded && (
+        <Button variant="subtle" color="gray" size={size} radius="xl" onClick={openClientIdSettings}>
+          הגדרת Client ID
+        </Button>
+      )}
+    </Group>
+  );
+
   return (
     <>
-      {!isConnected ? (
-        <Group gap={4} wrap="nowrap">
-          <Button
-            variant="light"
-            color="blue"
-            size={size}
-            radius="xl"
-            leftSection={
-              isConnecting || isLoadingScript ? (
-                <Loader size={14} color="blue" />
-              ) : (
-                <IconBrandGoogleDrive size={16} />
-              )
-            }
-            onClick={handleSignInClick}
-            disabled={!isReady || isConnecting || isLoadingScript}
-            aria-label="התחבר ל-Google Drive"
-          >
-            התחבר ל-Google Drive
-          </Button>
-          {settingsButton}
-        </Group>
+      {embedded ? (
+        <Stack gap="sm">
+          <Group gap="xs" justify="space-between" wrap="wrap">
+            <Text fz="sm" c="dimmed">
+              סטטוס חיבור
+            </Text>
+            {statusBadge}
+          </Group>
+          {controls}
+        </Stack>
       ) : (
-        <Group gap="xs" wrap="nowrap">
-          <Button
-            variant="light"
-            color="emerald"
-            size={size}
-            radius="xl"
-            leftSection={
-              isBusy ? <Loader size={14} color="emerald" /> : <IconCloudUpload size={16} />
-            }
-            onClick={() => {
-              void handleBackup();
-            }}
-            disabled={isBusy}
-            aria-label="גבה עכשיו ל-Google Drive"
-          >
-            גבה עכשיו
-          </Button>
-          <Button
-            variant="light"
-            color="blue"
-            size={size}
-            radius="xl"
-            leftSection={
-              isBusy ? <Loader size={14} color="blue" /> : <IconCloudDownload size={16} />
-            }
-            onClick={() => setConfirmRestore(true)}
-            disabled={isBusy}
-            aria-label="שחזר מגיבוי Google Drive"
-          >
-            שחזר מגיבוי
-          </Button>
-          <Button
-            variant="subtle"
-            color="gray"
-            size={size}
-            radius="xl"
-            leftSection={<IconLogout size={16} />}
-            onClick={() => {
-              void handleSignOut();
-            }}
-            disabled={isBusy}
-            aria-label="התנתק מ-Google Drive"
-          >
-            התנתק
-          </Button>
-          {settingsButton}
-        </Group>
+        controls
       )}
 
       <Modal
@@ -256,8 +303,8 @@ export function GoogleDriveBackup({ compact = false }: GoogleDriveBackupProps): 
       >
         <Stack gap="md">
           <Text fz="sm">
-            השחזור יחליף את כל הנתונים המקומיים (חודשים, קטגוריות, זיכרון עסקים ויעדים) בתוכן
-            קובץ הגיבוי מ-Drive. הפעולה אינה ניתנת לביטול.
+            השחזור יחליף את כל הנתונים המקומיים (חודשים, קטגוריות, זיכרון עסקים ויעדים) בתוכן קובץ
+            הגיבוי מ-Drive. הפעולה אינה ניתנת לביטול.
           </Text>
           <Group justify="flex-end" gap="xs">
             <Button

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { GOOGLE_DRIVE_SCOPE } from '../lib/constants';
 import {
   DriveAuthError,
@@ -9,6 +9,7 @@ import {
 } from '../lib/googleDrive';
 import type { DriveBackupPayload } from '../types';
 import { useExpenseStore } from '../store/useExpenseStore';
+import { useGoogleDriveStore } from '../store/useGoogleDriveStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 const GIS_WAIT_MS = 15_000;
@@ -25,7 +26,7 @@ export interface UseGoogleDriveResult {
   isConnected: boolean;
   /** True when the user has saved a valid Client ID locally. */
   hasClientId: boolean;
-  /** Opens the Google consent popup and stores the access token in React state. */
+  /** Opens the Google consent popup and stores the access token in session store. */
   signIn: () => Promise<void>;
   /** Revokes the access token and clears in-memory auth state. */
   signOut: () => Promise<void>;
@@ -39,6 +40,14 @@ export interface UseGoogleDriveResult {
   /** Uploads/downloads busy flag for UI spinners. */
   isBusy: boolean;
 }
+
+/** Module-level GIS client — shared across remounts of Settings / GoogleDriveBackup. */
+let tokenClient: GoogleTokenClient | null = null;
+let lastClientId: string | null = null;
+let pendingToken: {
+  resolve: (token: string) => void;
+  reject: (error: Error) => void;
+} | null = null;
 
 function waitForGis(): Promise<GoogleGisNamespace> {
   return new Promise((resolve, reject) => {
@@ -62,9 +71,52 @@ function waitForGis(): Promise<GoogleGisNamespace> {
   });
 }
 
+function ensureTokenClient(clientId: string): GoogleTokenClient {
+  if (tokenClient !== null && lastClientId === clientId) {
+    return tokenClient;
+  }
+
+  if (!window.google?.accounts?.oauth2) {
+    throw new Error('Google Identity Services עדיין לא מוכן.');
+  }
+
+  const client = window.google.accounts.oauth2.initTokenClient({
+    client_id: clientId,
+    scope: GOOGLE_DRIVE_SCOPE,
+    callback: (response: GoogleTokenResponse) => {
+      const pending = pendingToken;
+      pendingToken = null;
+
+      if (response.error || !response.access_token) {
+        const message =
+          response.error_description ?? response.error ?? 'ההתחברות ל-Google בוטלה או נכשלה.';
+        pending?.reject(new Error(message));
+        return;
+      }
+
+      const ttlMs =
+        typeof response.expires_in === 'number' && response.expires_in > 0
+          ? response.expires_in * 1000
+          : 3600 * 1000;
+
+      useGoogleDriveStore.getState().setSession(response.access_token, Date.now() + ttlMs);
+      pending?.resolve(response.access_token);
+    },
+    error_callback: (error) => {
+      const pending = pendingToken;
+      pendingToken = null;
+      pending?.reject(new Error(error.message ?? 'ההתחברות ל-Google נכשלה.'));
+    },
+  });
+
+  tokenClient = client;
+  lastClientId = clientId;
+  return client;
+}
+
 /**
  * Manages Google Drive auth via GIS Token Client (public client_id only).
- * Access tokens stay in React state — never localStorage.
+ * Access tokens live in useGoogleDriveStore (memory only — never localStorage).
  * The OAuth client_id is read from the user settings store (localStorage).
  */
 export function useGoogleDrive(): UseGoogleDriveResult {
@@ -72,15 +124,10 @@ export function useGoogleDrive(): UseGoogleDriveResult {
   const [isLoadingScript, setIsLoadingScript] = useState<boolean>(true);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
   const [isBusy, setIsBusy] = useState<boolean>(false);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [expiresAt, setExpiresAt] = useState<number>(0);
 
-  const tokenClientRef = useRef<GoogleTokenClient | null>(null);
-  const lastClientIdRef = useRef<string | null>(null);
-  const pendingTokenRef = useRef<{
-    resolve: (token: string) => void;
-    reject: (error: Error) => void;
-  } | null>(null);
+  const accessToken = useGoogleDriveStore((state) => state.accessToken);
+  const expiresAt = useGoogleDriveStore((state) => state.expiresAt);
+  const clearSession = useGoogleDriveStore((state) => state.clearSession);
 
   const googleOAuthClientId = useSettingsStore((state) => state.googleOAuthClientId);
 
@@ -126,70 +173,12 @@ export function useGoogleDrive(): UseGoogleDriveResult {
 
   // Drop in-memory Drive session if the user clears/changes the Client ID.
   useEffect(() => {
-    if (
-      lastClientIdRef.current !== null &&
-      lastClientIdRef.current !== googleOAuthClientId
-    ) {
-      setAccessToken(null);
-      setExpiresAt(0);
-      tokenClientRef.current = null;
+    if (lastClientId !== null && lastClientId !== googleOAuthClientId) {
+      clearSession();
+      tokenClient = null;
+      lastClientId = null;
     }
-  }, [googleOAuthClientId]);
-
-  const ensureTokenClient = useCallback(
-    (clientId: string): GoogleTokenClient => {
-      if (
-        tokenClientRef.current !== null &&
-        lastClientIdRef.current === clientId
-      ) {
-        return tokenClientRef.current;
-      }
-
-      if (!window.google?.accounts?.oauth2) {
-        throw new Error('Google Identity Services עדיין לא מוכן.');
-      }
-
-      const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: GOOGLE_DRIVE_SCOPE,
-        callback: (response: GoogleTokenResponse) => {
-          const pending = pendingTokenRef.current;
-          pendingTokenRef.current = null;
-
-          if (response.error || !response.access_token) {
-            const message =
-              response.error_description ??
-              response.error ??
-              'ההתחברות ל-Google בוטלה או נכשלה.';
-            pending?.reject(new Error(message));
-            setIsConnecting(false);
-            return;
-          }
-
-          const ttlMs =
-            typeof response.expires_in === 'number' && response.expires_in > 0
-              ? response.expires_in * 1000
-              : 3600 * 1000;
-
-          setAccessToken(response.access_token);
-          setExpiresAt(Date.now() + ttlMs);
-          setIsConnecting(false);
-          pending?.resolve(response.access_token);
-        },
-        error_callback: (error) => {
-          const pending = pendingTokenRef.current;
-          pendingTokenRef.current = null;
-          setIsConnecting(false);
-          pending?.reject(new Error(error.message ?? 'ההתחברות ל-Google נכשלה.'));
-        },
-      });
-
-      tokenClientRef.current = client;
-      lastClientIdRef.current = clientId;
-      return client;
-    },
-    []
-  );
+  }, [googleOAuthClientId, clearSession]);
 
   const requestAccessToken = useCallback(
     (options?: { selectAccount?: boolean }): Promise<string> => {
@@ -206,13 +195,20 @@ export function useGoogleDrive(): UseGoogleDriveResult {
       try {
         client = ensureTokenClient(clientId.trim());
       } catch (error) {
-        return Promise.reject(
-          error instanceof Error ? error : new Error('אתחול Google נכשל.')
-        );
+        return Promise.reject(error instanceof Error ? error : new Error('אתחול Google נכשל.'));
       }
 
       return new Promise<string>((resolve, reject) => {
-        pendingTokenRef.current = { resolve, reject };
+        pendingToken = {
+          resolve: (token) => {
+            setIsConnecting(false);
+            resolve(token);
+          },
+          reject: (error) => {
+            setIsConnecting(false);
+            reject(error);
+          },
+        };
         setIsConnecting(true);
         try {
           // select_account lets the user pick which Google account to use.
@@ -221,13 +217,13 @@ export function useGoogleDrive(): UseGoogleDriveResult {
             prompt: options?.selectAccount ? 'select_account' : '',
           });
         } catch (error) {
-          pendingTokenRef.current = null;
+          pendingToken = null;
           setIsConnecting(false);
           reject(error instanceof Error ? error : new Error('בקשת הרשאה נכשלה.'));
         }
       });
     },
-    [ensureTokenClient, isReady]
+    [isReady]
   );
 
   const signIn = useCallback(async (): Promise<void> => {
@@ -235,9 +231,8 @@ export function useGoogleDrive(): UseGoogleDriveResult {
   }, [requestAccessToken]);
 
   const signOut = useCallback(async (): Promise<void> => {
-    const token = accessToken;
-    setAccessToken(null);
-    setExpiresAt(0);
+    const token = useGoogleDriveStore.getState().accessToken;
+    clearSession();
 
     if (!token || !window.google?.accounts?.oauth2) {
       return;
@@ -247,12 +242,13 @@ export function useGoogleDrive(): UseGoogleDriveResult {
       window.google?.accounts.oauth2.revoke(token, () => resolve());
       window.setTimeout(() => resolve(), 2000);
     });
-  }, [accessToken]);
+  }, [clearSession]);
 
   const withFreshToken = useCallback(
     async <T,>(operation: (token: string) => Promise<T>): Promise<T> => {
-      let token = accessToken;
-      if (!token || Date.now() >= expiresAt - TOKEN_SKEW_MS) {
+      const session = useGoogleDriveStore.getState();
+      let token = session.accessToken;
+      if (!token || Date.now() >= session.expiresAt - TOKEN_SKEW_MS) {
         token = await requestAccessToken();
       }
 
@@ -266,7 +262,7 @@ export function useGoogleDrive(): UseGoogleDriveResult {
         throw error;
       }
     },
-    [accessToken, expiresAt, requestAccessToken]
+    [requestAccessToken]
   );
 
   const backupNow = useCallback(async (): Promise<void> => {

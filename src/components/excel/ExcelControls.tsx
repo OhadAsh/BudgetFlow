@@ -32,9 +32,21 @@ import { ExcelFileDropArea } from './ExcelFileDropArea';
 
 interface ExcelControlsProps {
   compact?: boolean;
+  /** When false, the import toolbar button is hidden (modal can still be controlled). */
+  showImportButton?: boolean;
+  /** When false, the export button is hidden. */
+  showExportButton?: boolean;
+  importOpened?: boolean;
+  onImportOpenedChange?: (opened: boolean) => void;
 }
 
-export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Element {
+export function ExcelControls({
+  compact = false,
+  showImportButton = true,
+  showExportButton = true,
+  importOpened: importOpenedProp,
+  onImportOpenedChange,
+}: ExcelControlsProps): JSX.Element {
   const months = useExpenseStore((state) => state.months);
   const customCategories = useExpenseStore((state) => state.customCategories);
   const merchantMemory = useExpenseStore((state) => state.merchantMemory);
@@ -42,7 +54,15 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
   const importFromExcel = useExpenseStore((state) => state.importFromExcel);
   const applyImportedSettings = useExpenseStore((state) => state.applyImportedSettings);
 
-  const [importOpen, setImportOpen] = useState<boolean>(false);
+  const [uncontrolledImportOpen, setUncontrolledImportOpen] = useState<boolean>(false);
+  const isImportControlled = importOpenedProp !== undefined;
+  const importOpen = isImportControlled ? importOpenedProp : uncontrolledImportOpen;
+  const setImportOpen = (next: boolean): void => {
+    if (!isImportControlled) {
+      setUncontrolledImportOpen(next);
+    }
+    onImportOpenedChange?.(next);
+  };
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<ExcelParseResult | null>(null);
   const [confirmingReset, setConfirmingReset] = useState<boolean>(false);
@@ -159,28 +179,34 @@ export function ExcelControls({ compact = false }: ExcelControlsProps): JSX.Elem
 
   return (
     <>
-      <Group gap="xs" wrap="nowrap">
-        <Button
-          variant="light"
-          color="emerald"
-          size={compact ? 'xs' : 'sm'}
-          leftSection={<IconDownload size={16} />}
-          onClick={handleExport}
-          aria-label="ייצוא לאקסל"
-        >
-          ייצוא
-        </Button>
-        <Button
-          variant="light"
-          color="gray"
-          size={compact ? 'xs' : 'sm'}
-          leftSection={<IconUpload size={16} />}
-          onClick={() => setImportOpen(true)}
-          aria-label="ייבוא מאקסל"
-        >
-          ייבוא
-        </Button>
-      </Group>
+      {(showExportButton || showImportButton) && (
+        <Group gap="xs" wrap="nowrap">
+          {showExportButton && (
+            <Button
+              variant="light"
+              color="emerald"
+              size={compact ? 'xs' : 'sm'}
+              leftSection={<IconDownload size={16} />}
+              onClick={handleExport}
+              aria-label="ייצוא לאקסל"
+            >
+              ייצוא
+            </Button>
+          )}
+          {showImportButton && (
+            <Button
+              variant="light"
+              color="gray"
+              size={compact ? 'xs' : 'sm'}
+              leftSection={<IconUpload size={16} />}
+              onClick={() => setImportOpen(true)}
+              aria-label="ייבוא מאקסל"
+            >
+              ייבוא
+            </Button>
+          )}
+        </Group>
+      )}
 
       <Modal opened={importOpen} onClose={closeImport} title="ייבוא נתונים מאקסל" size="lg">
         <Stack gap="md">

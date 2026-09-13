@@ -57,6 +57,16 @@ interface ExpenseState {
   importFromExcel: (months: MonthData[]) => void;
   /** Full replace from a Google Drive (or other) JSON backup snapshot. */
   restoreFromBackup: (payload: DriveBackupPayload) => void;
+  /**
+   * Marks / unmarks a month as an outlier. Optional note is stored when marking;
+   * cleared when unmarking or when note is null/empty.
+   */
+  setMonthOutlier: (
+    year: number,
+    month: number,
+    isOutlier: boolean,
+    note?: string | null
+  ) => void;
   clearAll: () => void;
 }
 
@@ -379,6 +389,36 @@ export const useExpenseStore = create<ExpenseState>()(
           categoryTargets: normalizeCategoryTargets(payload.categoryTargets),
         }),
 
+      setMonthOutlier: (year, month, isOutlier, note) =>
+        set((state) => ({
+          months: pruneEmptyMonths(
+            withMonth(state.months, year, month, (target) => {
+              if (!isOutlier) {
+                const cleared: MonthData = {
+                  year: target.year,
+                  month: target.month,
+                  income: target.income,
+                  expenses: target.expenses,
+                };
+                return cleared;
+              }
+
+              const next: MonthData = { ...target, isOutlier: true };
+              if (note === null) {
+                delete next.outlierNote;
+              } else if (typeof note === 'string') {
+                const trimmed = note.trim();
+                if (trimmed.length > 0) {
+                  next.outlierNote = trimmed;
+                } else {
+                  delete next.outlierNote;
+                }
+              }
+              return next;
+            })
+          ),
+        })),
+
       clearAll: () =>
         set({
           months: [],
@@ -392,11 +432,27 @@ export const useExpenseStore = create<ExpenseState>()(
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      version: 4,
+      version: 5,
       migrate: (persisted) => {
         const state = (persisted ?? {}) as Record<string, unknown>;
         const rawMonths = Array.isArray(state.months) ? (state.months as MonthData[]) : [];
-        const months = pruneEmptyMonths(rawMonths);
+        const months = pruneEmptyMonths(
+          rawMonths.map((entry) => {
+            const next: MonthData = {
+              year: entry.year,
+              month: entry.month,
+              income: Array.isArray(entry.income) ? entry.income : [],
+              expenses: Array.isArray(entry.expenses) ? entry.expenses : [],
+            };
+            if (entry.isOutlier === true) {
+              next.isOutlier = true;
+            }
+            if (typeof entry.outlierNote === 'string' && entry.outlierNote.trim().length > 0) {
+              next.outlierNote = entry.outlierNote.trim();
+            }
+            return next;
+          })
+        );
         const selectedYear =
           typeof state.selectedYear === 'number'
             ? resolveSelectedYear(months, state.selectedYear)

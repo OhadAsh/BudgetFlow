@@ -12,6 +12,7 @@ import {
 import { COLORS, HEBREW_MONTHS, SECTION_TITLE_STYLE } from '../../lib/constants';
 import { formatCompactCurrency, formatCurrency } from '../../lib/utils';
 import { useMonthData } from '../../hooks/useMonthData';
+import { ExcludeOutliersToggle } from '../month/ExcludeOutliersToggle';
 
 interface TrendPoint {
   month: number;
@@ -21,6 +22,7 @@ interface TrendPoint {
   saved: number;
   savingsZone: [number, number];
   hasData: boolean;
+  isOutlier: boolean;
 }
 
 interface TooltipEntry {
@@ -39,7 +41,7 @@ function TrendTooltip({ active, payload }: TrendTooltipProps): JSX.Element | nul
   return (
     <Box
       p="xs"
-      bg="#FFFFFF"
+      bg={COLORS.tooltipBg}
       style={{
         borderRadius: 12,
         boxShadow: '0 4px 16px rgba(15, 23, 42, 0.12)',
@@ -58,6 +60,12 @@ function TrendTooltip({ active, payload }: TrendTooltipProps): JSX.Element | nul
       <Text fz="xs" c={point.saved >= 0 ? COLORS.income : COLORS.expense}>
         {`נחסך: ${formatCurrency(point.saved)}`}
       </Text>
+      {point.isOutlier && (
+        <Text fz="xs" c="orange">
+          חודש חריג
+          {!point.hasData ? ' (מוחרג מהגרף)' : ''}
+        </Text>
+      )}
     </Box>
   );
 }
@@ -73,9 +81,15 @@ export function TrendLineChart(): JSX.Element {
   return (
     <Card>
       <Stack gap="sm">
-        <Group justify="space-between" align="center">
-          <Text style={SECTION_TITLE_STYLE}>מגמת הכנסות מול הוצאות</Text>
-          <Group gap="sm">
+        <Group justify="space-between" align="flex-start" wrap="wrap">
+          <Stack gap={2} style={{ minWidth: 0 }}>
+            <Text style={SECTION_TITLE_STYLE}>מגמת הכנסות מול הוצאות</Text>
+            <Text fz="xs" c={COLORS.textSecondary}>
+              ערכים חודשיים (לא מצטבר / YTD) — כל נקודה מייצגת חודש בודד
+            </Text>
+          </Stack>
+          <Group gap="sm" wrap="wrap">
+            <ExcludeOutliersToggle compact />
             <Group gap={4}>
               <Box style={{ width: 10, height: 10, borderRadius: 999, backgroundColor: COLORS.income }} />
               <Text fz="xs" c={COLORS.textSecondary}>

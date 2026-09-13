@@ -42,7 +42,18 @@ import {
 } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 
-export function CategoryManager(): JSX.Element {
+interface CategoryManagerProps {
+  /** When true, no toolbar button is rendered — open via `opened` / `onOpenedChange`. */
+  hideTrigger?: boolean;
+  opened?: boolean;
+  onOpenedChange?: (opened: boolean) => void;
+}
+
+export function CategoryManager({
+  hideTrigger = false,
+  opened: openedProp,
+  onOpenedChange,
+}: CategoryManagerProps): JSX.Element {
   const customCategories = useExpenseStore((state) => state.customCategories);
   const merchantMemory = useExpenseStore((state) => state.merchantMemory);
   const categoryTargets = useExpenseStore((state) => state.categoryTargets);
@@ -57,7 +68,15 @@ export function CategoryManager(): JSX.Element {
   );
   const applyImportedSettings = useExpenseStore((state) => state.applyImportedSettings);
 
-  const [opened, setOpened] = useState<boolean>(false);
+  const [uncontrolledOpened, setUncontrolledOpened] = useState<boolean>(false);
+  const isControlled = openedProp !== undefined;
+  const opened = isControlled ? openedProp : uncontrolledOpened;
+  const setOpened = (next: boolean): void => {
+    if (!isControlled) {
+      setUncontrolledOpened(next);
+    }
+    onOpenedChange?.(next);
+  };
   const [adding, setAdding] = useState<boolean>(false);
   const [newName, setNewName] = useState<string>('');
   const [newEmoji, setNewEmoji] = useState<string>(EMOJI_OPTIONS[0]);
@@ -237,17 +256,19 @@ export function CategoryManager(): JSX.Element {
 
   return (
     <>
-      <Button
-        variant="light"
-        color="gray"
-        size="xs"
-        radius="xl"
-        leftSection={<IconTags size={16} />}
-        onClick={() => setOpened(true)}
-        aria-label="ניהול קטגוריות"
-      >
-        ניהול קטגוריות 🏷️
-      </Button>
+      {!hideTrigger && (
+        <Button
+          variant="light"
+          color="gray"
+          size="xs"
+          radius="xl"
+          leftSection={<IconTags size={16} />}
+          onClick={() => setOpened(true)}
+          aria-label="ניהול קטגוריות"
+        >
+          ניהול קטגוריות 🏷️
+        </Button>
+      )}
 
       <Modal opened={opened} onClose={close} title="ניהול קטגוריות" size="lg">
         <Tabs defaultValue="categories" variant="pills" radius="xl">
@@ -401,7 +422,7 @@ export function CategoryManager(): JSX.Element {
                     mt="md"
                     p="md"
                     style={{
-                      backgroundColor: '#F8FAFC',
+                      backgroundColor: COLORS.pageBg,
                       borderRadius: 16,
                       border: `1px solid ${COLORS.border}`,
                     }}
@@ -420,7 +441,7 @@ export function CategoryManager(): JSX.Element {
                               fontSize: 20,
                               lineHeight: 1.4,
                               borderRadius: 10,
-                              backgroundColor: newEmoji === emoji ? '#E2E8F0' : 'transparent',
+                              backgroundColor: newEmoji === emoji ? COLORS.mutedBg : 'transparent',
                               textAlign: 'center',
                             }}
                           >

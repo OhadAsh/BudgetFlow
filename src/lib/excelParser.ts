@@ -658,14 +658,14 @@ const MERCHANT_KEYWORDS: Array<{ keywords: string[]; category: CategoryType }> =
   },
 ];
 
-const CAL_HEADERS = {
-  date: 'תאריך עסקה',
-  merchant: 'שם בית עסק',
-  transactionAmount: 'סכום עסקה',
-  chargeAmount: 'סכום חיוב',
-  transactionType: 'סוג עסקה',
-  branch: 'ענף',
-  notes: 'הערות',
+/** Alternate Cal column titles seen across export versions / Excel re-saves. */
+const CAL_HEADER_ALIASES = {
+  date: ['תאריך עסקה', 'תאריך החיוב', 'ת. עסקה', 'ת.עסקה', 'תאריך'],
+  merchant: ['שם בית עסק', 'שם בית העסק', 'שם העסק', 'בית עסק'],
+  transactionAmount: ['סכום עסקה', 'סכום מקורי', 'סכום העסקה'],
+  chargeAmount: ['סכום חיוב', 'סכום לחיוב', 'סכום החיוב', 'חיוב'],
+  branch: ['ענף', 'קטגוריה', 'סוג ענף'],
+  notes: ['הערות', 'הערה', 'פירוט', 'פרטים'],
 } as const;
 
 const CAL_DISCLAIMER_PREFIX = 'את המידע המלא';
@@ -687,31 +687,47 @@ function normalizeSpaces(value: unknown): string {
   return toSafeString(value).replace(/\s+/g, ' ').trim();
 }
 
+/** First matching column index for any of the known header aliases (exact, space-normalized). */
+function indexOfHeaderAlias(headerRow: SheetRow, aliases: readonly string[]): number {
+  for (const alias of aliases) {
+    const normalizedAlias = normalizeSpaces(alias);
+    const index = headerRow.findIndex((cell) => normalizeSpaces(cell) === normalizedAlias);
+    if (index !== -1) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function rowHasAnyHeaderAlias(row: SheetRow, aliases: readonly string[]): boolean {
+  return row.some((cell) => {
+    const value = normalizeSpaces(cell);
+    return aliases.some((alias) => value === normalizeSpaces(alias));
+  });
+}
+
 /** True when a sheet carries the Cal transaction table header. */
 export function isCalSheet(rows: SheetRow[]): boolean {
   return findCalHeaderRow(rows) !== -1;
 }
 
 function findCalHeaderRow(rows: SheetRow[]): number {
-  return rows.findIndex((row) =>
-    row.some((cell) => {
-      const value = normalizeSpaces(cell);
-      return value === CAL_HEADERS.date || value === CAL_HEADERS.merchant;
-    })
+  // Prefer specific titles so bare "תאריך" alone does not false-positive other sheets.
+  return rows.findIndex(
+    (row) =>
+      rowHasAnyHeaderAlias(row, CAL_HEADER_ALIASES.merchant) ||
+      rowHasAnyHeaderAlias(row, ['תאריך עסקה', 'תאריך החיוב', 'ת. עסקה', 'ת.עסקה'])
   );
 }
 
 function mapCalColumns(headerRow: SheetRow): CalColumns | null {
-  const indexOf = (title: string): number =>
-    headerRow.findIndex((cell) => normalizeSpaces(cell) === title);
-
   const columns: CalColumns = {
-    date: indexOf(CAL_HEADERS.date),
-    merchant: indexOf(CAL_HEADERS.merchant),
-    transactionAmount: indexOf(CAL_HEADERS.transactionAmount),
-    chargeAmount: indexOf(CAL_HEADERS.chargeAmount),
-    branch: indexOf(CAL_HEADERS.branch),
-    notes: indexOf(CAL_HEADERS.notes),
+    date: indexOfHeaderAlias(headerRow, CAL_HEADER_ALIASES.date),
+    merchant: indexOfHeaderAlias(headerRow, CAL_HEADER_ALIASES.merchant),
+    transactionAmount: indexOfHeaderAlias(headerRow, CAL_HEADER_ALIASES.transactionAmount),
+    chargeAmount: indexOfHeaderAlias(headerRow, CAL_HEADER_ALIASES.chargeAmount),
+    branch: indexOfHeaderAlias(headerRow, CAL_HEADER_ALIASES.branch),
+    notes: indexOfHeaderAlias(headerRow, CAL_HEADER_ALIASES.notes),
   };
 
   if (columns.merchant === -1 || columns.chargeAmount === -1) {
@@ -728,7 +744,7 @@ export function excelSerialToISO(serial: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** Accepts the serial numbers Cal exports, and dd/MM/yyyy text as a fallback. */
+/** Accepts Excel serials, ISO, and common Israeli dd/MM/yyyy variants (with optional time). */
 export function parseCalDate(value: unknown): string {
   if (typeof value === 'number') {
     return excelSerialToISO(value);
@@ -737,16 +753,31 @@ export function parseCalDate(value: unknown): string {
     return value.toISOString().slice(0, 10);
   }
 
-  const text = toSafeString(value);
+  let text = toSafeString(value);
+  if (text.length === 0) {
+    return '';
+  }
+
+  // ISO: 2026-01-10 or 2026-01-10T12:00:00 / with space time.
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  // Strip trailing time: "10/01/2026 14:30:00" / "10-01-2026 14:30".
+  text = text.replace(/\s+\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?.*$/, '').trim();
+
   const match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
   if (match) {
     const day = Number.parseInt(match[1], 10);
     const month = Number.parseInt(match[2], 10);
     const rawYear = Number.parseInt(match[3], 10);
     const year = rawYear < 100 ? 2000 + rawYear : rawYear;
-    const date = new Date(Date.UTC(year, month - 1, day));
-    if (!Number.isNaN(date.getTime())) {
-      return date.toISOString().slice(0, 10);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const date = new Date(Date.UTC(year, month - 1, day));
+      if (!Number.isNaN(date.getTime())) {
+        return date.toISOString().slice(0, 10);
+      }
     }
   }
 
@@ -793,8 +824,20 @@ function parseChargeCell(value: unknown): number | null {
 
 /** "תשלום 2 מתוך 12" when the row belongs to an installment plan. */
 export function extractInstallment(notes: string): string | null {
-  const match = normalizeSpaces(notes).match(/תשלום\s*(\d+)\s*מתוך\s*(\d+)/);
-  return match ? `תשלום ${match[1]} מתוך ${match[2]}` : null;
+  const normalized = normalizeSpaces(notes);
+  const hebrew = normalized.match(/תשלום\s*(\d+)\s*מתוך\s*(\d+)/);
+  if (hebrew) {
+    return `תשלום ${hebrew[1]} מתוך ${hebrew[2]}`;
+  }
+  const slash = normalized.match(/תשלום\s*(\d+)\s*\/\s*(\d+)/);
+  if (slash) {
+    return `תשלום ${slash[1]} מתוך ${slash[2]}`;
+  }
+  const bare = normalized.match(/^(\d+)\s*מתוך\s*(\d+)$/);
+  if (bare) {
+    return `תשלום ${bare[1]} מתוך ${bare[2]}`;
+  }
+  return null;
 }
 
 export function categoryFromBranch(branch: string): CategoryType | null {
@@ -930,7 +973,13 @@ export function parseCalChargePeriod(text: string): { year: number; month: numbe
 function findChargePeriod(rows: SheetRow[], headerIndex: number): { year: number; month: number } | null {
   for (let index = 0; index < headerIndex; index += 1) {
     const line = rows[index].map((cell) => toSafeString(cell)).join(' ');
-    if (line.includes(CAL_CHARGE_LINE)) {
+    const normalized = normalizeSpaces(line);
+    if (
+      normalized.includes(CAL_CHARGE_LINE) ||
+      normalized.includes('חיוב ב') ||
+      normalized.includes('לחודש') ||
+      normalized.includes('עסקאות ל')
+    ) {
       const period = parseCalChargePeriod(line);
       if (period) {
         return period;
@@ -1060,14 +1109,15 @@ export async function parseCalFile(file: File): Promise<BankImportResult> {
  * Max (מקס) credit card statements
  * ------------------------------------------------------------------ */
 
-const MAX_HEADERS = {
-  date: 'תאריך עסקה',
-  merchant: 'שם בית העסק',
-  category: 'קטגוריה',
-  chargeAmount: 'סכום חיוב',
-  chargeCurrency: 'מטבע חיוב',
-  transactionType: 'סוג עסקה',
-  notes: 'הערות',
+/** Alternate Max column titles across export versions. */
+const MAX_HEADER_ALIASES = {
+  date: ['תאריך עסקה', 'תאריך החיוב', 'תאריך', 'ת. עסקה'],
+  merchant: ['שם בית העסק', 'שם בית עסק', 'שם העסק', 'בית עסק'],
+  category: ['קטגוריה', 'ענף', 'סיווג'],
+  chargeAmount: ['סכום חיוב', 'סכום לחיוב', 'סכום', 'חיוב'],
+  chargeCurrency: ['מטבע חיוב', 'מטבע', 'מטבע הסכום'],
+  transactionType: ['סוג עסקה', 'סוג', 'סוג החיוב'],
+  notes: ['הערות', 'הערה', 'פירוט', 'פרטים'],
 } as const;
 
 const MAX_TOTAL_PREFIX = 'סך הכל';
@@ -1101,12 +1151,26 @@ interface MaxColumns {
 
 function findMaxHeaderRow(rows: SheetRow[]): number {
   return rows.findIndex((row) => {
-    const cells = row.map((cell) => normalizeSpaces(cell));
-    return (
-      cells.includes(MAX_HEADERS.merchant) &&
-      cells.includes(MAX_HEADERS.chargeAmount) &&
-      cells.includes(MAX_HEADERS.chargeCurrency)
-    );
+    const hasMerchant = rowHasAnyHeaderAlias(row, MAX_HEADER_ALIASES.merchant);
+    // Keep detection charge titles relatively specific — bare "סכום"/"חיוב" collide with Cal.
+    const hasCharge = rowHasAnyHeaderAlias(row, [
+      'סכום חיוב',
+      'סכום לחיוב',
+      'סכום החיוב',
+    ]);
+    if (!hasMerchant || !hasCharge) {
+      return false;
+    }
+
+    const hasCurrency = rowHasAnyHeaderAlias(row, MAX_HEADER_ALIASES.chargeCurrency);
+    if (hasCurrency) {
+      return true;
+    }
+
+    // Newer Max exports may omit currency but still use קטגוריה (Cal uses ענף).
+    const hasMaxCategory = rowHasAnyHeaderAlias(row, ['קטגוריה']);
+    const hasCalBranch = rowHasAnyHeaderAlias(row, ['ענף']);
+    return hasMaxCategory && !hasCalBranch;
   });
 }
 
@@ -1116,16 +1180,13 @@ export function isMaxSheet(rows: SheetRow[]): boolean {
 }
 
 function mapMaxColumns(headerRow: SheetRow): MaxColumns | null {
-  const indexOf = (title: string): number =>
-    headerRow.findIndex((cell) => normalizeSpaces(cell) === title);
-
   const columns: MaxColumns = {
-    date: indexOf(MAX_HEADERS.date),
-    merchant: indexOf(MAX_HEADERS.merchant),
-    category: indexOf(MAX_HEADERS.category),
-    chargeAmount: indexOf(MAX_HEADERS.chargeAmount),
-    transactionType: indexOf(MAX_HEADERS.transactionType),
-    notes: indexOf(MAX_HEADERS.notes),
+    date: indexOfHeaderAlias(headerRow, MAX_HEADER_ALIASES.date),
+    merchant: indexOfHeaderAlias(headerRow, MAX_HEADER_ALIASES.merchant),
+    category: indexOfHeaderAlias(headerRow, MAX_HEADER_ALIASES.category),
+    chargeAmount: indexOfHeaderAlias(headerRow, MAX_HEADER_ALIASES.chargeAmount),
+    transactionType: indexOfHeaderAlias(headerRow, MAX_HEADER_ALIASES.transactionType),
+    notes: indexOfHeaderAlias(headerRow, MAX_HEADER_ALIASES.notes),
   };
 
   if (columns.merchant === -1 || columns.chargeAmount === -1) {
@@ -1136,11 +1197,16 @@ function mapMaxColumns(headerRow: SheetRow): MaxColumns | null {
 
 /** Max writes dates as DD-MM-YYYY text; anything else falls back to the Cal parser. */
 export function parseMaxDate(value: unknown): string {
-  const text = toSafeString(value);
-  const match = text.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  const text = toSafeString(value).replace(/\s+\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?.*$/, '').trim();
+  const match = text.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/);
   if (match) {
-    const [, day, month, year] = match;
-    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    const day = Number.parseInt(match[1], 10);
+    const month = Number.parseInt(match[2], 10);
+    const rawYear = Number.parseInt(match[3], 10);
+    const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+    }
   }
   return parseCalDate(value);
 }
@@ -1150,13 +1216,21 @@ export function resolveMaxCategory(rawCategory: string): CategoryType {
   return MAX_CATEGORY_MAP[normalized] ?? 'אחר';
 }
 
-/** Statement month from the "06/2026" line above the column headers. */
+/** Statement month from lines like "06/2026", "06-2026", or Hebrew month + year. */
 function findMaxChargePeriod(rows: SheetRow[], headerIndex: number): { year: number; month: number } | null {
   for (let index = 0; index < headerIndex; index += 1) {
     for (const cell of rows[index]) {
-      const match = normalizeSpaces(cell).match(/^(0?[1-9]|1[0-2])\/((?:19|20)\d{2})$/);
-      if (match) {
-        return { year: Number.parseInt(match[2], 10), month: Number.parseInt(match[1], 10) };
+      const normalized = normalizeSpaces(cell);
+      const slashOrDash = normalized.match(/^(0?[1-9]|1[0-2])[/-]((?:19|20)\d{2})$/);
+      if (slashOrDash) {
+        return {
+          year: Number.parseInt(slashOrDash[2], 10),
+          month: Number.parseInt(slashOrDash[1], 10),
+        };
+      }
+      const fromText = parseCalChargePeriod(normalized);
+      if (fromText) {
+        return fromText;
       }
     }
   }
@@ -1313,10 +1387,19 @@ export async function parseCardFile(file: File): Promise<BankImportResult> {
 
 const DISCOUNT_SHEET_NAME = 'עובר ושב';
 
-const DISCOUNT_HEADERS = {
-  date: 'תאריך',
-  description: 'תיאור התנועה',
-  amount: '₪ זכות/חובה',
+/** Alternate Discount column titles across export versions / Excel re-saves. */
+const DISCOUNT_HEADER_ALIASES = {
+  date: ['תאריך', 'תאריך ערך', 'תאריך רישום', 'תאריך התנועה'],
+  description: ['תיאור התנועה', 'תיאור', 'פרטים', 'פירוט התנועה', 'תאור התנועה'],
+  amount: [
+    '₪ זכות/חובה',
+    'זכות/חובה',
+    'חובה/זכות',
+    '₪ חובה/זכות',
+    'סכום',
+    'סכום בש"ח',
+    'סכום בש״ח',
+  ],
 } as const;
 
 /**
@@ -1405,10 +1488,11 @@ interface DiscountColumns {
 }
 
 function findDiscountHeaderRow(rows: SheetRow[]): number {
-  return rows.findIndex((row) => {
-    const cells = row.map((cell) => normalizeSpaces(cell));
-    return cells.includes(DISCOUNT_HEADERS.description) && cells.includes(DISCOUNT_HEADERS.amount);
-  });
+  return rows.findIndex(
+    (row) =>
+      rowHasAnyHeaderAlias(row, DISCOUNT_HEADER_ALIASES.description) &&
+      rowHasAnyHeaderAlias(row, DISCOUNT_HEADER_ALIASES.amount)
+  );
 }
 
 /** True for a Discount current-account sheet, by name or by column headers. */
@@ -1417,13 +1501,10 @@ export function isDiscountSheet(sheetName: string, rows: SheetRow[]): boolean {
 }
 
 function mapDiscountColumns(headerRow: SheetRow): DiscountColumns | null {
-  const indexOf = (title: string): number =>
-    headerRow.findIndex((cell) => normalizeSpaces(cell) === title);
-
   const columns: DiscountColumns = {
-    date: indexOf(DISCOUNT_HEADERS.date),
-    description: indexOf(DISCOUNT_HEADERS.description),
-    amount: indexOf(DISCOUNT_HEADERS.amount),
+    date: indexOfHeaderAlias(headerRow, DISCOUNT_HEADER_ALIASES.date),
+    description: indexOfHeaderAlias(headerRow, DISCOUNT_HEADER_ALIASES.description),
+    amount: indexOfHeaderAlias(headerRow, DISCOUNT_HEADER_ALIASES.amount),
   };
 
   if (columns.description === -1 || columns.amount === -1) {
@@ -1530,13 +1611,25 @@ export function mapIncomeLabel(description: string): string {
  * Discount Excel dates arrive as serial numbers (preferred) or as M/D/YY text
  * when SheetJS stringifies them. Ambiguous numeric pairs (both ≤ 12) use M/D
  * because that is the format Discount's export produces.
+ * Also accepts ISO and dd/MM when day > 12.
  */
 export function parseDiscountDate(value: unknown): string {
   if (typeof value === 'number' || value instanceof Date) {
     return parseCalDate(value);
   }
 
-  const text = toSafeString(value);
+  const raw = toSafeString(value);
+  if (raw.length === 0) {
+    return '';
+  }
+
+  // ISO first — unambiguous.
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s].*)?$/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  const text = raw.replace(/\s+\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?.*$/, '').trim();
   const match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
   if (!match) {
     return parseCalDate(value);
