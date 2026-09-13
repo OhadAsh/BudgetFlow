@@ -43,6 +43,54 @@ type SheetRow = Cell[];
 
 const SHEET_NAME_LIMIT = 31;
 
+/** Soft caps after XLSX.read — byte size alone cannot stop a dense small workbook. */
+export const MAX_SHEETS_PER_WORKBOOK = 20;
+export const MAX_ROWS_PER_SHEET = 50_000;
+export const MAX_CELLS_PER_WORKBOOK = 500_000;
+
+const WORKBOOK_TOO_DENSE_ERROR =
+  'הקובץ גדול או צפוף מדי לייבוא (יותר מדי גיליונות, שורות או תאים). נסה קובץ קטן יותר.';
+
+/**
+ * Rejects workbooks that exceed sheet / row / cell caps.
+ * Call immediately after XLSX.read, before row processing.
+ */
+export function assertWorkbookWithinImportLimits(workbook: XLSX.WorkBook): void {
+  const sheetNames = workbook.SheetNames;
+  if (sheetNames.length > MAX_SHEETS_PER_WORKBOOK) {
+    throw new Error(WORKBOOK_TOO_DENSE_ERROR);
+  }
+
+  let totalCells = 0;
+  for (const name of sheetNames) {
+    const sheet = workbook.Sheets[name];
+    if (!sheet) continue;
+
+    const ref = sheet['!ref'];
+    if (ref === undefined || ref.length === 0) continue;
+
+    const range = XLSX.utils.decode_range(ref);
+    const rows = range.e.r - range.s.r + 1;
+    const cols = range.e.c - range.s.c + 1;
+
+    if (rows > MAX_ROWS_PER_SHEET) {
+      throw new Error(WORKBOOK_TOO_DENSE_ERROR);
+    }
+
+    totalCells += rows * cols;
+    if (totalCells > MAX_CELLS_PER_WORKBOOK) {
+      throw new Error(WORKBOOK_TOO_DENSE_ERROR);
+    }
+  }
+}
+
+/** Reads an ArrayBuffer into a workbook and enforces import density caps. */
+function readWorkbookWithLimits(buffer: ArrayBuffer): XLSX.WorkBook {
+  const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+  assertWorkbookWithinImportLimits(workbook);
+  return workbook;
+}
+
 export const SETTINGS_SHEET_NAMES = {
   categories: 'קטגוריות מותאמות',
   merchants: 'זיכרון עסקים',
@@ -222,7 +270,7 @@ function buildTargetsSheetRows(categoryTargets: CategoryTargets): SheetRow[] {
 /** Reads a settings Excel file (custom categories + merchant memory sheets). */
 export async function parseSettingsFile(file: File): Promise<SettingsParseResult> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+  const workbook = readWorkbookWithLimits(buffer);
   const settings = extractSettingsFromWorkbook(workbook);
 
   if (settings === null) {
@@ -350,7 +398,7 @@ export async function parseExcelFile(
   existingMonths: MonthData[]
 ): Promise<ExcelParseResult> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+  const workbook = readWorkbookWithLimits(buffer);
 
   const months: MonthData[] = [];
   const skippedSheets: string[] = [];
@@ -1067,7 +1115,7 @@ export function parseCalRows(
 /** Parses a Cal statement file, detecting the format from its column headers. */
 export async function parseCalFile(file: File): Promise<BankImportResult> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+  const workbook = readWorkbookWithLimits(buffer);
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
@@ -1318,7 +1366,7 @@ export const UNKNOWN_FORMAT_ERROR = 'פורמט לא מוכר';
 /** Parses a credit card statement (Cal or Max), detecting the format per sheet. */
 export async function parseCardFile(file: File): Promise<BankImportResult> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+  const workbook = readWorkbookWithLimits(buffer);
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
@@ -1755,7 +1803,7 @@ export function parseDiscountExpenseRows(rows: SheetRow[]): BankExpenseTransacti
 /** Parses a Bank Discount statement file into income + expense rows for preview. */
 export async function parseBankIncomeFile(file: File): Promise<BankIncomeImportResult> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+  const workbook = readWorkbookWithLimits(buffer);
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];

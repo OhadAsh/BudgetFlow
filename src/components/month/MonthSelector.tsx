@@ -4,6 +4,7 @@ import { HEBREW_MONTHS, SHORT_MONTHS, COLORS } from '../../lib/constants';
 import { formatMonthYear, nextPeriod, previousPeriod } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { useMonthData } from '../../hooks/useMonthData';
+import { ClearMonthButton } from './ClearMonthButton';
 import { OutlierMonthControls } from './OutlierMonthControls';
 
 export function MonthSelector(): JSX.Element {
@@ -37,15 +38,19 @@ export function MonthSelector(): JSX.Element {
           </ActionIcon>
 
           <Stack gap={0} align="center" style={{ flex: 1, minWidth: 0 }}>
-            <Text
-              fw={700}
-              fz={{ base: '1.25rem', sm: '1.5rem' }}
-              c={COLORS.textPrimary}
-              ta="center"
-              truncate
-            >
-              {formatMonthYear(year, month)}
-            </Text>
+            <Group gap={6} justify="center" wrap="nowrap" style={{ maxWidth: '100%' }}>
+              <Text
+                fw={700}
+                fz={{ base: '1.25rem', sm: '1.5rem' }}
+                c={COLORS.textPrimary}
+                ta="center"
+                truncate
+                style={{ minWidth: 0 }}
+              >
+                {formatMonthYear(year, month)}
+              </Text>
+              <ClearMonthButton />
+            </Group>
             <Text fz="xs" c={COLORS.textSecondary} ta="center">
               {stats.hasData ? `${stats.expenseCount} הוצאות רשומות` : 'אין נתונים לחודש זה'}
             </Text>

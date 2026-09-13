@@ -1,4 +1,4 @@
-import type { CategoryType, CustomCategory, MerchantMemory, MonthData } from '../types';
+import type { CategoryType, CustomCategory, Expense, MerchantMemory, MonthData } from '../types';
 import {
   BUILT_IN_CATEGORIES,
   CATEGORIES,
@@ -289,4 +289,64 @@ export function matchesSearchQuery(haystack: string, query: string): boolean {
 /** True when a card charge is a refund/credit (negative amount). */
 export function isCreditAmount(amount: number): boolean {
   return Number.isFinite(amount) && amount < 0;
+}
+
+/** Display-only expense list sort — does not affect stored order or aggregations. */
+export type ExpenseSortColumn = 'amount' | 'date' | 'category';
+export type SortDirection = 'asc' | 'desc';
+
+function safeAmount(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Sorts a filtered expense list for the monthly table UI.
+ * Empty dates always sink to the bottom regardless of direction.
+ */
+export function sortExpensesForDisplay(
+  expenses: Expense[],
+  column: ExpenseSortColumn,
+  direction: SortDirection
+): Expense[] {
+  const dir = direction === 'asc' ? 1 : -1;
+
+  return [...expenses].sort((a, b) => {
+    let primary = 0;
+
+    if (column === 'amount') {
+      primary = safeAmount(a.amount) - safeAmount(b.amount);
+    } else if (column === 'date') {
+      const dateA = a.date ?? '';
+      const dateB = b.date ?? '';
+      if (dateA.length === 0 && dateB.length === 0) {
+        primary = 0;
+      } else if (dateA.length === 0) {
+        return 1;
+      } else if (dateB.length === 0) {
+        return -1;
+      } else {
+        primary = dateA.localeCompare(dateB);
+      }
+    } else {
+      primary = a.category.localeCompare(b.category, 'he');
+    }
+
+    if (primary !== 0) {
+      return primary * dir;
+    }
+
+    // Stable-ish tie-breakers: date desc, then amount desc, then description.
+    const dateA = a.date ?? '';
+    const dateB = b.date ?? '';
+    if (dateA.length > 0 && dateB.length > 0 && dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+    if (dateA.length === 0 && dateB.length > 0) return 1;
+    if (dateB.length === 0 && dateA.length > 0) return -1;
+
+    const amountDiff = safeAmount(b.amount) - safeAmount(a.amount);
+    if (amountDiff !== 0) return amountDiff;
+
+    return a.description.localeCompare(b.description, 'he');
+  });
 }

@@ -35,9 +35,11 @@ import {
 import { applySettingsImport } from '../../lib/settingsImport';
 import {
   buildCategorySelectOptions,
+  EXCEL_MAX_BYTES,
   formatCurrency,
   isCategoryNameTaken,
   isCategoryType,
+  isExcelFile,
   matchesSearchQuery,
 } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
@@ -193,6 +195,21 @@ export function CategoryManager({
   };
 
   const handleImportFile = async (file: File): Promise<void> => {
+    if (!isExcelFile(file) || file.size > EXCEL_MAX_BYTES) {
+      notifications.show({
+        color: 'red',
+        title: 'שגיאה',
+        message:
+          file.size > EXCEL_MAX_BYTES
+            ? 'הקובץ גדול מדי לייבוא (מקסימום 10MB).'
+            : 'ניתן להעלות קבצי אקסל בפורמט xlsx בלבד.',
+      });
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      return;
+    }
+
     setImportLoading(true);
     try {
       const parsed = await parseSettingsFile(file);

@@ -44,8 +44,8 @@ export default function App(): JSX.Element {
               <MonthlySummary />
 
               <Grid gutter="md" align="stretch" styles={{ inner: { width: '100%' } }}>
-                <Grid.Col span={5} style={{ minWidth: 0, maxWidth: '100%' }}>
-                  <Stack gap="md" style={{ minWidth: 0 }}>
+                <Grid.Col span={5} style={{ minWidth: 0, maxWidth: '100%', display: 'flex' }}>
+                  <Stack gap="md" style={{ minWidth: 0, flex: '1 1 auto' }}>
                     <MonthSelector />
                     <IncomeSection />
                     <ExpenseTable />

@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "מעקב הוצאות וחיסכון חודשי — client-side Hebrew personal finance tracker",
+  "_xlsxCdnNote": "xlsx is installed from cdn.sheetjs.com (not npm semver) because the public registry is stuck at vulnerable 0.18.5 (prototype pollution CVE-2023-30533 + ReDoS CVE-2024-22363). Patched CE builds ship only as CDN tarballs — pin a specific version, never floating latest.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -20,7 +21,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.15.4",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "^4.5.7"
   },
   "devDependencies": {

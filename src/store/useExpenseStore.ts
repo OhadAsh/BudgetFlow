@@ -67,6 +67,14 @@ interface ExpenseState {
     isOutlier: boolean,
     note?: string | null
   ) => void;
+  /**
+   * Removes all income + expenses for one month (and its outlier flag).
+   * Returns a deep snapshot for in-memory undo, or null when there was nothing to clear.
+   * Does not touch custom categories, merchant memory, targets, or other months.
+   */
+  clearMonth: (year: number, month: number) => MonthData | null;
+  /** Restores a month snapshot previously returned by clearMonth (undo). */
+  restoreMonth: (snapshot: MonthData) => void;
   clearAll: () => void;
 }
 
@@ -96,6 +104,23 @@ function sortMonths(months: MonthData[]): MonthData[] {
 
 function hasEntries(month: MonthData): boolean {
   return month.income.length > 0 || month.expenses.length > 0;
+}
+
+/** Deep-enough clone of a month for undo / isolation (entries are plain data). */
+function cloneMonthData(month: MonthData): MonthData {
+  const clone: MonthData = {
+    year: month.year,
+    month: month.month,
+    income: month.income.map((entry) => ({ ...entry })),
+    expenses: month.expenses.map((entry) => ({ ...entry })),
+  };
+  if (month.isOutlier === true) {
+    clone.isOutlier = true;
+  }
+  if (typeof month.outlierNote === 'string' && month.outlierNote.trim().length > 0) {
+    clone.outlierNote = month.outlierNote.trim();
+  }
+  return clone;
 }
 
 /** Drops month shells that no longer hold income or expenses. */
@@ -418,6 +443,35 @@ export const useExpenseStore = create<ExpenseState>()(
             })
           ),
         })),
+
+      clearMonth: (year, month) => {
+        let snapshot: MonthData | null = null;
+        set((state) => {
+          const safeMonth = clampMonth(month);
+          const existing = state.months.find(
+            (entry) => entry.year === year && entry.month === safeMonth
+          );
+          if (!existing || !hasEntries(existing)) {
+            return state;
+          }
+          snapshot = cloneMonthData(existing);
+          return {
+            months: state.months.filter(
+              (entry) => !(entry.year === year && entry.month === safeMonth)
+            ),
+          };
+        });
+        return snapshot;
+      },
+
+      restoreMonth: (snapshot) =>
+        set((state) => {
+          const restored = cloneMonthData(snapshot);
+          const without = state.months.filter(
+            (entry) => !(entry.year === restored.year && entry.month === restored.month)
+          );
+          return { months: sortMonths([...without, restored]) };
+        }),
 
       clearAll: () =>
         set({
