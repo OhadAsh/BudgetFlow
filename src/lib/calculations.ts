@@ -33,11 +33,6 @@ export function sumIncome(income: IncomeSource[]): number {
   return income.reduce((total, source) => total + safeNumber(source.amount), 0);
 }
 
-/** Total of all expense rows, including the savings category. */
-export function sumAllExpenses(expenses: Expense[]): number {
-  return expenses.reduce((total, expense) => total + safeNumber(expense.amount), 0);
-}
-
 /** Spending only — money routed to the savings category is not an expense. */
 export function sumExpenses(expenses: Expense[]): number {
   return expenses

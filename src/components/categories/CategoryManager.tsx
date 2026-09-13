@@ -669,9 +669,3 @@ export function CategoryManager({
     </>
   );
 }
-
-/** Kept for callers that need Select data next to CategoryManager. */
-export function useCategorySelectOptions(): Array<{ value: string; label: string }> {
-  const customCategories = useExpenseStore((state) => state.customCategories);
-  return useMemo(() => buildCategorySelectOptions(customCategories), [customCategories]);
-}

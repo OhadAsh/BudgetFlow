@@ -45,16 +45,6 @@ export function normalizeHourValue(value: unknown, fallback: number): number {
   return rounded;
 }
 
-export function normalizeHourDarkWindow(
-  darkBefore: unknown,
-  darkFrom: unknown
-): HourDarkWindow {
-  return {
-    darkBefore: normalizeHourValue(darkBefore, HOUR_DARK_BEFORE),
-    darkFrom: normalizeHourValue(darkFrom, HOUR_DARK_FROM),
-  };
-}
-
 /**
  * True when "hour" mode should use dark (local wall clock).
  * Dark before `darkBefore`, and from `darkFrom` inclusive onward.

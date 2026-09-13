@@ -139,10 +139,6 @@ function trimZero(value: string): string {
   return value.endsWith('.0') ? value.slice(0, -2) : value;
 }
 
-export function formatNumber(value: number): string {
-  return numberFormatter.format(Number.isFinite(value) ? Math.round(value) : 0);
-}
-
 export function formatPercent(value: number): string {
   const safe = Number.isFinite(value) ? value : 0;
   return `${Math.round(safe)}%`;
@@ -174,10 +170,6 @@ export function clampMonth(month: number): number {
   return Math.min(12, Math.max(1, Math.round(month)));
 }
 
-export function monthKey(year: number, month: number): string {
-  return `${year}-${clampMonth(month).toString().padStart(2, '0')}`;
-}
-
 /** Previous month, rolling the year over at January. */
 export function previousPeriod(year: number, month: number): { year: number; month: number } {
   const safeMonth = clampMonth(month);
@@ -192,20 +184,6 @@ export function nextPeriod(year: number, month: number): { year: number; month: 
 
 export function isCategoryType(value: unknown): value is CategoryType {
   return typeof value === 'string' && value.trim().length > 0;
-}
-
-export function getCategoryColor(
-  category: CategoryType,
-  customCategories: CustomCategory[] = []
-): string {
-  return resolveCategoryMeta(category, customCategories).color;
-}
-
-export function getCategoryIcon(
-  category: CategoryType,
-  customCategories: CustomCategory[] = []
-): string {
-  return resolveCategoryMeta(category, customCategories).emoji;
 }
 
 /** True when the name collides with a built-in or another custom category. */
@@ -234,10 +212,6 @@ export function getSavingsRateLabel(rate: number): string {
   if (rate >= SAVINGS_RATE_THRESHOLDS.OK) return 'שיעור חיסכון סביר';
   if (rate > SAVINGS_RATE_THRESHOLDS.POOR) return 'שיעור חיסכון נמוך';
   return 'אין חיסכון החודש';
-}
-
-export function getAmountColor(value: number): string {
-  return value >= 0 ? '#10b981' : '#ef4444';
 }
 
 /** Parses free text / Excel cell values into a non-negative number. */

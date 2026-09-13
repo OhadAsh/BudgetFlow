@@ -1713,11 +1713,6 @@ export function parseDiscountIncomeRows(rows: SheetRow[]): BankIncomeTransaction
   return incomes;
 }
 
-/** @deprecated Alias — prefer parseDiscountIncomeRows. */
-export function parseDiscountRows(rows: SheetRow[]): BankIncomeTransaction[] {
-  return parseDiscountIncomeRows(rows);
-}
-
 /** Reads debit (חובה) rows — rent standing orders, utilities, transfers out. */
 export function parseDiscountExpenseRows(rows: SheetRow[]): BankExpenseTransaction[] {
   const headerIndex = findDiscountHeaderRow(rows);
