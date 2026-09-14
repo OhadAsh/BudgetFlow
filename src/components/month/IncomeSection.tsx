@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import {
   ActionIcon,
   Box,
@@ -7,6 +7,7 @@ import {
   Divider,
   Group,
   NumberInput,
+  ScrollArea,
   Stack,
   Table,
   Text,
@@ -19,6 +20,19 @@ import { COLORS, SECTION_TITLE_STYLE } from '../../lib/constants';
 import { formatCurrency } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
 import { useMonthData } from '../../hooks/useMonthData';
+
+/** The list grows with its content and only starts scrolling on months with many entries. */
+const INCOME_LIST_MAX_HEIGHT = 'min(38vh, 340px)';
+
+const stickyHeaderCellStyle: CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 3,
+  backgroundColor: COLORS.cardBg,
+  boxShadow: `inset 0 -1px 0 ${COLORS.border}`,
+  color: COLORS.textSecondary,
+  fontWeight: 600,
+};
 
 type EditingField = 'label' | 'amount';
 
@@ -63,15 +77,19 @@ export function IncomeSection(): JSX.Element {
             לא נרשמו הכנסות לחודש זה
           </Text>
         ) : (
-          <Table.ScrollContainer minWidth={280} type="native">
-          <Table verticalSpacing="xs" horizontalSpacing="xs" highlightOnHover>
+          <ScrollArea.Autosize
+            mah={INCOME_LIST_MAX_HEIGHT}
+            type="auto"
+            offsetScrollbars
+            scrollbars="y"
+            aria-label="רשימת הכנסות"
+          >
+          <Table verticalSpacing="xs" horizontalSpacing="xs" highlightOnHover miw={280}>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600 }}>תיאור</Table.Th>
-                <Table.Th style={{ color: COLORS.textSecondary, fontWeight: 600, width: 130 }}>
-                  סכום
-                </Table.Th>
-                <Table.Th style={{ width: 44 }} />
+                <Table.Th style={stickyHeaderCellStyle}>תיאור</Table.Th>
+                <Table.Th style={{ ...stickyHeaderCellStyle, width: 130 }}>סכום</Table.Th>
+                <Table.Th style={{ ...stickyHeaderCellStyle, width: 44 }} />
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -175,7 +193,7 @@ export function IncomeSection(): JSX.Element {
               ))}
             </Table.Tbody>
           </Table>
-          </Table.ScrollContainer>
+          </ScrollArea.Autosize>
         )}
 
         <Divider color={COLORS.border} />
