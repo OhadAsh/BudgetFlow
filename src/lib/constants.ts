@@ -9,7 +9,7 @@ export const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 export const DRIVE_BACKUP_FILE_NAME = 'budgetflow-backup.json';
 
 /** Schema version written into Drive backup JSON. */
-export const DRIVE_BACKUP_VERSION = 1 as const;
+export const DRIVE_BACKUP_VERSION = 2 as const;
 
 export interface BuiltInCategoryMeta {
   name: BuiltInCategory;

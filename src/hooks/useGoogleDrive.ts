@@ -130,6 +130,7 @@ export function useGoogleDrive(): UseGoogleDriveResult {
   const clearSession = useGoogleDriveStore((state) => state.clearSession);
 
   const googleOAuthClientId = useSettingsStore((state) => state.googleOAuthClientId);
+  const openRouterApiKey = useSettingsStore((state) => state.openRouterApiKey);
 
   const months = useExpenseStore((state) => state.months);
   const selectedYear = useExpenseStore((state) => state.selectedYear);
@@ -275,6 +276,7 @@ export function useGoogleDrive(): UseGoogleDriveResult {
         customCategories,
         merchantMemory,
         categoryTargets,
+        openRouterApiKey,
       });
       await withFreshToken((token) => uploadBackupToDrive(token, payload));
     } finally {
@@ -287,6 +289,7 @@ export function useGoogleDrive(): UseGoogleDriveResult {
     customCategories,
     merchantMemory,
     categoryTargets,
+    openRouterApiKey,
     withFreshToken,
   ]);
 

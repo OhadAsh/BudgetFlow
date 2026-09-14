@@ -133,6 +133,11 @@ export interface DriveBackupPayload {
   customCategories: CustomCategory[];
   merchantMemory: MerchantMemory;
   categoryTargets: CategoryTargets;
+  /**
+   * OpenRouter API key from expense-settings-v1.
+   * Google OAuth Client ID is intentionally excluded — it is device/OAuth setup, not user data.
+   */
+  openRouterApiKey: string | null;
 }
 
 export interface ImportPreviewRow {

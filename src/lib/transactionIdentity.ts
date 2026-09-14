@@ -184,6 +184,28 @@ export function extractAnyInstallmentMarker(note: string | undefined): string | 
   return null;
 }
 
+/** Purchase date label embedded in card-import notes, e.g. "רכישה 01/01/2026". */
+export function extractPurchaseDateLabel(note: string | undefined): string | null {
+  if (note === undefined || note.length === 0) return null;
+  const match = note.replace(/\s+/g, ' ').trim().match(/רכישה\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Hover/tap hint for installment rows that are shown under the billing month.
+ * Returns null when the note is not an installment charge.
+ */
+export function buildInstallmentChargeMonthTooltip(note: string | undefined): string | null {
+  if (extractInstallmentMarker(note) === null) {
+    return null;
+  }
+  const purchase = extractPurchaseDateLabel(note);
+  if (purchase !== null) {
+    return `מוצג לפי חודש חיוב (Cal), לא חודש רכישה: ${purchase}`;
+  }
+  return 'מוצג לפי חודש חיוב (Cal), לא חודש רכישה';
+}
+
 /** Last 4 digits only — rejects anything that is not exactly 4 digits. */
 export function normalizeCardLast4(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;

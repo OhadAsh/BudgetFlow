@@ -9,12 +9,16 @@ import {
   Table,
   Text,
   TextInput,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { IconX } from '@tabler/icons-react';
+import { IconCalendarShare, IconX } from '@tabler/icons-react';
 import type { Expense } from '../../types';
 import { COLORS } from '../../lib/constants';
-import { formatCardSourceLabel } from '../../lib/transactionIdentity';
+import {
+  buildInstallmentChargeMonthTooltip,
+  formatCardSourceLabel,
+} from '../../lib/transactionIdentity';
 import {
   buildCategorySelectOptions,
   formatCurrency,
@@ -41,6 +45,7 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
   const [editing, setEditing] = useState<EditingField>(null);
   const isCredit = isCreditAmount(expense.amount);
   const sourceLabel = formatCardSourceLabel(expense.source, expense.cardLast4);
+  const installmentTooltip = buildInstallmentChargeMonthTooltip(expense.note);
 
   const categoryOptions = useMemo(
     () => buildCategorySelectOptions(customCategories),
@@ -194,20 +199,42 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
             }}
           />
         ) : (
-          <UnstyledButton
-            onClick={() => setEditing('amount')}
-            aria-label={`עריכת סכום ${expense.description}`}
-            style={{
-              fontSize: 14,
-              fontWeight: 600,
-              color: isCredit ? COLORS.income : COLORS.expense,
-              direction: 'ltr',
-              unicodeBidi: 'isolate',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {formatCurrency(expense.amount)}
-          </UnstyledButton>
+          <Group gap={4} wrap="nowrap" justify="flex-start">
+            <UnstyledButton
+              onClick={() => setEditing('amount')}
+              aria-label={`עריכת סכום ${expense.description}`}
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                color: isCredit ? COLORS.income : COLORS.expense,
+                direction: 'ltr',
+                unicodeBidi: 'isolate',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {formatCurrency(expense.amount)}
+            </UnstyledButton>
+            {installmentTooltip !== null && (
+              <Tooltip
+                label={installmentTooltip}
+                withArrow
+                multiline
+                maw={260}
+                events={{ hover: true, focus: true, touch: true }}
+              >
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="xs"
+                  radius="xl"
+                  aria-label={installmentTooltip}
+                  style={{ flexShrink: 0 }}
+                >
+                  <IconCalendarShare size={12} stroke={1.5} />
+                </ActionIcon>
+              </Tooltip>
+            )}
+          </Group>
         )}
       </Table.Td>
 

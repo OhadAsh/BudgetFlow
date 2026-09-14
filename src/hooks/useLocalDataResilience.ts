@@ -24,6 +24,7 @@ let backupNudgeShownThisPageLoad = false;
 
 function readSnapshot(): LocalBackupSnapshotInput {
   const state = useExpenseStore.getState();
+  const settings = useSettingsStore.getState();
   return {
     months: state.months,
     selectedYear: state.selectedYear,
@@ -31,6 +32,7 @@ function readSnapshot(): LocalBackupSnapshotInput {
     customCategories: state.customCategories,
     merchantMemory: state.merchantMemory,
     categoryTargets: state.categoryTargets,
+    openRouterApiKey: settings.openRouterApiKey,
   };
 }
 

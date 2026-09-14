@@ -7,6 +7,7 @@ import {
   Divider,
   Drawer,
   Group,
+  Loader,
   Modal,
   Stack,
   Text,
@@ -20,7 +21,7 @@ import {
   IconTags,
   IconTrash,
 } from '@tabler/icons-react';
-import { clearAllUserData } from '../../lib/clearUserData';
+import { clearAllUserDataIncludingDrive } from '../../lib/clearUserData';
 import { COLORS } from '../../lib/constants';
 import {
   buildExportFileName,
@@ -28,6 +29,7 @@ import {
   exportBackupWorkbook,
 } from '../../lib/excelParser';
 import { useExpenseStore } from '../../store/useExpenseStore';
+import { useGoogleDriveStore } from '../../store/useGoogleDriveStore';
 import { CategoryManager } from '../categories/CategoryManager';
 import { GoogleDriveBackup } from '../excel/GoogleDriveBackup';
 import { LocalDataBackup } from '../excel/LocalDataBackup';
@@ -56,8 +58,17 @@ export function SettingsPanel({ opened, onClose }: SettingsPanelProps): JSX.Elem
 
   const [deleteStep, setDeleteStep] = useState<DeleteStep>(null);
   const [categoriesOpen, setCategoriesOpen] = useState<boolean>(false);
+  const [isWiping, setIsWiping] = useState<boolean>(false);
+
+  const driveConnected = useGoogleDriveStore(
+    (state) =>
+      state.accessToken !== null &&
+      state.accessToken.length > 0 &&
+      state.expiresAt > Date.now()
+  );
 
   const closeDelete = (): void => {
+    if (isWiping) return;
     setDeleteStep(null);
   };
 
@@ -105,15 +116,38 @@ export function SettingsPanel({ opened, onClose }: SettingsPanelProps): JSX.Elem
     }
   };
 
-  const handleNuclearDelete = (): void => {
-    clearAllUserData();
-    closeDelete();
-    onClose();
-    notifications.show({
-      color: 'emerald',
-      title: 'הצלחה',
-      message: 'כל הנתונים נמחקו בהצלחה, כולל מפתח ה-AI ו-Google Client ID',
-    });
+  const handleNuclearDelete = async (): Promise<void> => {
+    setIsWiping(true);
+    try {
+      const result = await clearAllUserDataIncludingDrive();
+      setDeleteStep(null);
+      onClose();
+
+      if (result.driveBackup === 'failed') {
+        notifications.show({
+          color: 'yellow',
+          title: 'המחיקה המקומית הושלמה',
+          message: `כל הנתונים המקומיים נמחקו, אך לא ניתן היה למחוק את גיבוי Google Drive${result.driveError !== null ? `: ${result.driveError}` : '.'} יש למחוק את הקובץ budgetflow-backup.json ידנית מ-Drive.`,
+          autoClose: 12_000,
+        });
+        return;
+      }
+
+      const driveNote =
+        result.driveBackup === 'deleted'
+          ? ' גם גיבוי Google Drive נמחק.'
+          : result.driveBackup === 'not_found'
+            ? ' לא נמצא גיבוי Drive למחיקה.'
+            : ' אם קיים גיבוי ב-Drive והנך לא מחובר — יש למחוק אותו ידנית.';
+
+      notifications.show({
+        color: 'emerald',
+        title: 'הצלחה',
+        message: `כל הנתונים נמחקו בהצלחה, כולל מפתח ה-AI ו-Google Client ID.${driveNote}`,
+      });
+    } finally {
+      setIsWiping(false);
+    }
   };
 
   const openCategories = (): void => {
@@ -237,6 +271,9 @@ export function SettingsPanel({ opened, onClose }: SettingsPanelProps): JSX.Elem
             title="פעולה בלתי הפיכה"
           >
             פעולה זו תמחק את כל ההוצאות, ההכנסות, מפתח ה-AI, Google Client ID והתובנות השמורות.
+            {driveConnected
+              ? ' אם קיים גיבוי ב-Google Drive — גם הוא יימחק.'
+              : ' אם קיים גיבוי ב-Google Drive והנך מחובר, גם הוא יימחק; אם אינך מחובר יש למחוק אותו ידנית.'}{' '}
             לא ניתן לשחזר את הנתונים לאחר המחיקה.
           </Alert>
 
@@ -274,18 +311,29 @@ export function SettingsPanel({ opened, onClose }: SettingsPanelProps): JSX.Elem
             האם אתה בטוח לחלוטין?
           </Text>
           <Text ta="center" c="dimmed" size="sm" mt="xs">
-            כל הנתונים, כולל מפתח ה-AI ו-Google Client ID, יימחקו לצמיתות
+            כל הנתונים, כולל מפתח ה-AI ו-Google Client ID
+            {driveConnected ? ' וגיבוי Google Drive' : ''}, יימחקו לצמיתות
           </Text>
           <Group mt="xl" justify="center">
-            <Button variant="default" radius="xl" onClick={() => setDeleteStep(1)}>
+            <Button
+              variant="default"
+              radius="xl"
+              onClick={() => setDeleteStep(1)}
+              disabled={isWiping}
+            >
               חזור
             </Button>
             <Button
               color="red"
               variant="filled"
               radius="xl"
-              leftSection={<IconTrash size={16} />}
-              onClick={handleNuclearDelete}
+              leftSection={
+                isWiping ? <Loader size={14} color="white" /> : <IconTrash size={16} />
+              }
+              onClick={() => {
+                void handleNuclearDelete();
+              }}
+              disabled={isWiping}
             >
               מחק הכל סופית
             </Button>

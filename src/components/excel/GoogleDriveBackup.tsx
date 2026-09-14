@@ -19,14 +19,16 @@ import {
   IconSettings,
 } from '@tabler/icons-react';
 import { useGoogleDrive } from '../../hooks/useGoogleDrive';
+import { applyFullBackupRestore } from '../../lib/clearUserData';
 import {
   DriveApiDisabledError,
   DriveNetworkError,
   DriveNotFoundError,
   DriveParseError,
+  formatDriveBackupExportedAt,
 } from '../../lib/googleDrive';
 import { formatMonthYear } from '../../lib/utils';
-import { useExpenseStore } from '../../store/useExpenseStore';
+import type { DriveBackupPayload } from '../../types';
 import { GoogleClientIdModal } from './GoogleClientIdModal';
 
 interface GoogleDriveBackupProps {
@@ -57,7 +59,6 @@ export function GoogleDriveBackup({
   compact = false,
   embedded = false,
 }: GoogleDriveBackupProps): JSX.Element {
-  const restoreFromBackup = useExpenseStore((state) => state.restoreFromBackup);
   const {
     isReady,
     isLoadingScript,
@@ -71,7 +72,7 @@ export function GoogleDriveBackup({
     fetchBackup,
   } = useGoogleDrive();
 
-  const [confirmRestore, setConfirmRestore] = useState<boolean>(false);
+  const [pendingRestore, setPendingRestore] = useState<DriveBackupPayload | null>(null);
   const [clientIdOpened, setClientIdOpened] = useState<boolean>(false);
   const [connectAfterSave, setConnectAfterSave] = useState<boolean>(false);
   const size = compact ? 'xs' : 'sm';
@@ -151,17 +152,10 @@ export function GoogleDriveBackup({
     }
   };
 
-  const handleRestoreConfirm = async (): Promise<void> => {
+  const handleRestoreClick = async (): Promise<void> => {
     try {
       const payload = await fetchBackup();
-      restoreFromBackup(payload);
-      setConfirmRestore(false);
-      const periodLabel = formatMonthYear(payload.selectedYear, payload.selectedMonth);
-      notifications.show({
-        color: 'emerald',
-        title: 'השחזור הושלם',
-        message: `הנתונים שוחזרו מ-Drive (${payload.months.length} חודשים). התקופה הנבחרת: ${periodLabel}.`,
-      });
+      setPendingRestore(payload);
     } catch (error) {
       notifications.show({
         color: 'red',
@@ -169,6 +163,26 @@ export function GoogleDriveBackup({
         message: errorMessage(error),
       });
     }
+  };
+
+  const handleRestoreConfirm = (): void => {
+    if (pendingRestore === null) {
+      return;
+    }
+    const payload = pendingRestore;
+    applyFullBackupRestore(payload);
+    setPendingRestore(null);
+    const periodLabel = formatMonthYear(payload.selectedYear, payload.selectedMonth);
+    const backupDate = formatDriveBackupExportedAt(payload.exportedAt);
+    notifications.show({
+      color: 'emerald',
+      title: 'השחזור הושלם',
+      message: `כל הנתונים המקומיים הוחלפו בגיבוי מ-${backupDate} (${payload.months.length} חודשים). התקופה הנבחרת: ${periodLabel}.`,
+    });
+  };
+
+  const closeRestoreConfirm = (): void => {
+    setPendingRestore(null);
   };
 
   const openClientIdSettings = (): void => {
@@ -250,7 +264,9 @@ export function GoogleDriveBackup({
         leftSection={
           isBusy ? <Loader size={14} color="blue" /> : <IconCloudDownload size={16} />
         }
-        onClick={() => setConfirmRestore(true)}
+        onClick={() => {
+          void handleRestoreClick();
+        }}
         disabled={isBusy}
         aria-label="שחזר מגיבוי Google Drive"
       >
@@ -279,6 +295,9 @@ export function GoogleDriveBackup({
     </Group>
   );
 
+  const backupDateLabel =
+    pendingRestore !== null ? formatDriveBackupExportedAt(pendingRestore.exportedAt) : '';
+
   return (
     <>
       {embedded ? (
@@ -296,35 +315,26 @@ export function GoogleDriveBackup({
       )}
 
       <Modal
-        opened={confirmRestore}
-        onClose={() => setConfirmRestore(false)}
+        opened={pendingRestore !== null}
+        onClose={closeRestoreConfirm}
         title="שחזור מגיבוי Google Drive"
         centered
       >
         <Stack gap="md">
           <Text fz="sm">
-            השחזור יחליף את כל הנתונים המקומיים (חודשים, קטגוריות, זיכרון עסקים ויעדים) בתוכן קובץ
-            הגיבוי מ-Drive. הפעולה אינה ניתנת לביטול.
+            פעולה זו תחליף את כל הנתונים המקומיים בגיבוי מ-{backupDateLabel} — כולל חודשים, קטגוריות,
+            זיכרון עסקים, יעדים ומפתח ה-AI (OpenRouter). Google Client ID לא יוחלף. הנתונים הנוכחיים
+            במכשיר יימחקו לחלוטין (לא ימוזגו). הפעולה אינה ניתנת לביטול.
           </Text>
           <Group justify="flex-end" gap="xs">
-            <Button
-              variant="default"
-              radius="xl"
-              onClick={() => setConfirmRestore(false)}
-              disabled={isBusy}
-            >
+            <Button variant="default" radius="xl" onClick={closeRestoreConfirm}>
               ביטול
             </Button>
             <Button
               color="blue"
               radius="xl"
-              leftSection={
-                isBusy ? <Loader size={14} color="white" /> : <IconCloudDownload size={16} />
-              }
-              onClick={() => {
-                void handleRestoreConfirm();
-              }}
-              disabled={isBusy}
+              leftSection={<IconCloudDownload size={16} />}
+              onClick={handleRestoreConfirm}
             >
               כן, שחזר מהגיבוי
             </Button>

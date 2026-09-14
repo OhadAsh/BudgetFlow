@@ -18,7 +18,7 @@ import {
 } from '@tabler/icons-react';
 import type { ExcelParseResult } from '../../types';
 import { COLORS } from '../../lib/constants';
-import { clearAllUserData } from '../../lib/clearUserData';
+import { clearAllUserDataIncludingDrive } from '../../lib/clearUserData';
 import {
   buildExportFileName,
   downloadWorkbook,
@@ -28,6 +28,7 @@ import {
 import { applySettingsImport } from '../../lib/settingsImport';
 import { formatCurrency, formatMonthYear } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
+import { useGoogleDriveStore } from '../../store/useGoogleDriveStore';
 import { ExcelFileDropArea } from './ExcelFileDropArea';
 
 interface ExcelControlsProps {
@@ -66,6 +67,13 @@ export function ExcelControls({
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<ExcelParseResult | null>(null);
   const [confirmingReset, setConfirmingReset] = useState<boolean>(false);
+
+  const driveConnected = useGoogleDriveStore(
+    (state) =>
+      state.accessToken !== null &&
+      state.accessToken.length > 0 &&
+      state.expiresAt > Date.now()
+  );
 
   const handleExport = (): void => {
     if (months.length === 0) {
@@ -163,14 +171,32 @@ export function ExcelControls({
     setConfirmingReset(false);
   };
 
-  const handleReset = (): void => {
-    clearAllUserData();
+  const handleReset = async (): Promise<void> => {
+    const result = await clearAllUserDataIncludingDrive();
     setConfirmingReset(false);
     closeImport();
+
+    if (result.driveBackup === 'failed') {
+      notifications.show({
+        color: 'yellow',
+        title: 'המחיקה המקומית הושלמה',
+        message: `כל הנתונים המקומיים נמחקו, אך לא ניתן היה למחוק את גיבוי Google Drive${result.driveError !== null ? `: ${result.driveError}` : '.'} יש למחוק את budgetflow-backup.json ידנית מ-Drive.`,
+        autoClose: 12_000,
+      });
+      return;
+    }
+
+    const driveNote =
+      result.driveBackup === 'deleted'
+        ? ' גם גיבוי Google Drive נמחק.'
+        : result.driveBackup === 'not_found'
+          ? ''
+          : ' אם קיים גיבוי ב-Drive יש למחוק אותו ידנית כשאינך מחובר.';
+
     notifications.show({
       color: 'red',
       title: 'הנתונים נמחקו',
-      message: 'כל הנתונים המקומיים הוסרו מהדפדפן, כולל מפתח ה-AI ו-Google Client ID.',
+      message: `כל הנתונים המקומיים הוסרו מהדפדפן, כולל מפתח ה-AI ו-Google Client ID.${driveNote}`,
     });
   };
 
@@ -231,11 +257,20 @@ export function ExcelControls({
                 <Alert color="red" icon={<IconAlertTriangle size={18} />} title="מחיקת כל הנתונים">
                   <Stack gap="xs">
                     <Text fz="sm">
-                      הפעולה תמחק את כל החודשים, מפתח ה-AI, Google Client ID והתובנות השמורות מהדפדפן ואינה ניתנת
-                      לשחזור.
+                      הפעולה תמחק את כל החודשים, מפתח ה-AI, Google Client ID והתובנות השמורות מהדפדפן
+                      {driveConnected
+                        ? ', וגם את גיבוי Google Drive אם קיים'
+                        : ' (אם קיים גיבוי ב-Drive והנך מחובר — גם הוא יימחק)'}
+                      , ואינה ניתנת לשחזור.
                     </Text>
                     <Group gap="xs">
-                      <Button color="red" size="xs" onClick={handleReset}>
+                      <Button
+                        color="red"
+                        size="xs"
+                        onClick={() => {
+                          void handleReset();
+                        }}
+                      >
                         כן, מחק הכול
                       </Button>
                       <Button

@@ -13,10 +13,12 @@ import {
 } from './excelParser';
 import { applySettingsImport } from './settingsImport';
 import {
+  buildInstallmentChargeMonthTooltip,
   buildLegacyTransactionHash,
   buildTransactionFingerprint,
   extractCardLast4FromHeaderRows,
   extractInstallmentMarker,
+  extractPurchaseDateLabel,
   fingerprintKeysForExpense,
   formatCardSourceLabel,
   isDuplicateFingerprint,
@@ -408,6 +410,19 @@ describe('helpers', () => {
       isPending: false,
       hash: 'x',
     })).toContain('תשלום 1 מתוך 2');
+  });
+
+  it('builds charge-month tooltip only for numbered installment notes', () => {
+    expect(extractPurchaseDateLabel('תשלום 1 מתוך 2 · רכישה 01/01/2026')).toBe('01/01/2026');
+    expect(buildInstallmentChargeMonthTooltip('תשלום 1 מתוך 2 · רכישה 01/01/2026')).toBe(
+      'מוצג לפי חודש חיוב (Cal), לא חודש רכישה: 01/01/2026'
+    );
+    expect(buildInstallmentChargeMonthTooltip('תשלום 1 מתוך 2')).toBe(
+      'מוצג לפי חודש חיוב (Cal), לא חודש רכישה'
+    );
+    expect(buildInstallmentChargeMonthTooltip('תשלומים · רכישה 01/01/2026')).toBeNull();
+    expect(buildInstallmentChargeMonthTooltip(undefined)).toBeNull();
+    expect(buildInstallmentChargeMonthTooltip('רגילה')).toBeNull();
   });
 
   it('fingerprintKeysForExpense includes stored hash', () => {

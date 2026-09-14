@@ -25,6 +25,7 @@ export interface LocalBackupSnapshotInput {
   customCategories: DriveBackupPayload['customCategories'];
   merchantMemory: DriveBackupPayload['merchantMemory'];
   categoryTargets: DriveBackupPayload['categoryTargets'];
+  openRouterApiKey?: string | null;
 }
 
 /** True when a prior backup exists and the configured interval has elapsed. */

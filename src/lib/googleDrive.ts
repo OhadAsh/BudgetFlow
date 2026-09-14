@@ -181,6 +181,7 @@ export function buildDriveBackupPayload(input: {
   customCategories: CustomCategory[];
   merchantMemory: MerchantMemory;
   categoryTargets: CategoryTargets;
+  openRouterApiKey?: string | null;
 }): DriveBackupPayload {
   return {
     version: DRIVE_BACKUP_VERSION,
@@ -191,6 +192,10 @@ export function buildDriveBackupPayload(input: {
     customCategories: input.customCategories,
     merchantMemory: input.merchantMemory,
     categoryTargets: input.categoryTargets,
+    openRouterApiKey:
+      typeof input.openRouterApiKey === 'string' && input.openRouterApiKey.trim().length > 0
+        ? input.openRouterApiKey
+        : null,
   };
 }
 
@@ -317,6 +322,11 @@ export function parseDriveBackupPayload(raw: unknown): DriveBackupPayload {
         .filter((row): row is CustomCategory => row !== null)
     : [];
 
+  const openRouterApiKey =
+    typeof raw.openRouterApiKey === 'string' && raw.openRouterApiKey.trim().length > 0
+      ? raw.openRouterApiKey
+      : null;
+
   return {
     version: typeof raw.version === 'number' ? raw.version : DRIVE_BACKUP_VERSION,
     exportedAt: typeof raw.exportedAt === 'string' ? raw.exportedAt : new Date().toISOString(),
@@ -326,7 +336,23 @@ export function parseDriveBackupPayload(raw: unknown): DriveBackupPayload {
     customCategories,
     merchantMemory: parseMerchantMemory(raw.merchantMemory),
     categoryTargets: parseCategoryTargets(raw.categoryTargets),
+    openRouterApiKey,
   };
+}
+
+/** Hebrew label for a backup's exportedAt timestamp (for restore confirmation copy). */
+export function formatDriveBackupExportedAt(exportedAt: string): string {
+  const ms = Date.parse(exportedAt);
+  if (!Number.isFinite(ms)) {
+    return exportedAt;
+  }
+  return new Intl.DateTimeFormat('he-IL', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(ms));
 }
 
 /**
@@ -392,4 +418,28 @@ export async function downloadBackupFromDrive(token: string): Promise<DriveBacku
   }
 
   return parseDriveBackupPayload(raw);
+}
+
+/**
+ * Permanently deletes the app backup file from Drive when present.
+ * Returns not_found when there is nothing to delete.
+ */
+export async function deleteBackupFromDrive(token: string): Promise<'deleted' | 'not_found'> {
+  const fileId = await findBackupFileId(token);
+  if (fileId === null) {
+    return 'not_found';
+  }
+
+  const response = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+
+  if (response.status === 404) {
+    return 'not_found';
+  }
+  if (!response.ok) {
+    throw new DriveNetworkError(`מחיקת הגיבוי מ-Drive נכשלה (${response.status}).`);
+  }
+  return 'deleted';
 }
