@@ -80,25 +80,40 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
             onDropdownClose={() => setEditing(null)}
           />
         ) : (
-          <UnstyledButton
-            onClick={() => setEditing('category')}
-            aria-label={`שינוי קטגוריה — ${expense.category}`}
-          >
-            <Badge
-              variant="light"
-              radius="sm"
-              styles={{
-                root: {
-                  backgroundColor: `${meta.color}1A`,
-                  color: meta.color,
-                  textTransform: 'none',
-                  fontWeight: 600,
-                },
-              }}
+          <Group gap={4} wrap="nowrap">
+            <UnstyledButton
+              onClick={() => setEditing('category')}
+              aria-label={`שינוי קטגוריה — ${expense.category}`}
             >
-              {`${meta.emoji} ${meta.name}`}
-            </Badge>
-          </UnstyledButton>
+              <Badge
+                variant="light"
+                radius="sm"
+                styles={{
+                  root: {
+                    backgroundColor: `${meta.color}1A`,
+                    color: meta.color,
+                    textTransform: 'none',
+                    fontWeight: 600,
+                  },
+                }}
+              >
+                {`${meta.emoji} ${meta.name}`}
+              </Badge>
+            </UnstyledButton>
+            {meta.kind === 'outOfFlow' && (
+              <Tooltip
+                label="קטגוריית חוץ-תזרים — ההוצאה מתועדת אבל לא נספרת במדדים ובגרפים."
+                withArrow
+                multiline
+                maw={240}
+                events={{ hover: true, focus: true, touch: true }}
+              >
+                <Badge size="xs" color="gray" variant="light" radius="sm" tabIndex={0}>
+                  לא בתזרים
+                </Badge>
+              </Tooltip>
+            )}
+          </Group>
         )}
       </Table.Td>
 

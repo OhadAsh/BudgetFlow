@@ -79,6 +79,11 @@ export function MonthlySummary(): JSX.Element {
               </Text>
             )}
           </Group>
+          {stats.totalOutOfFlow > 0 && (
+            <Text fz="xs" c={COLORS.textSecondary} lineClamp={2}>
+              {`בנוסף ${formatCurrency(stats.totalOutOfFlow)} חוץ-תזרים — לא נספר במדדים`}
+            </Text>
+          )}
         </Stack>
       </Card>
 

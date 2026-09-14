@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type {
+  CategoryKind,
   CategoryTargets,
   CustomCategory,
   DriveBackupPayload,
@@ -166,6 +167,27 @@ function resolveInitialPeriod(months: MonthData[]): { year: number; month: numbe
   return latest === null ? { year, month } : { year: latest.year, month: latest.month };
 }
 
+const CATEGORY_KINDS: CategoryKind[] = ['spending', 'savings', 'outOfFlow'];
+
+function normalizeCategoryKind(value: unknown): CategoryKind {
+  return CATEGORY_KINDS.includes(value as CategoryKind) ? (value as CategoryKind) : 'spending';
+}
+
+/** Guarantees every custom category carries a valid kind (categories predate the field). */
+function normalizeCustomCategories(value: unknown): CustomCategory[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is Record<string, unknown> => entry !== null && typeof entry === 'object')
+    .filter((entry) => typeof entry.id === 'string' && typeof entry.name === 'string')
+    .map((entry) => ({
+      id: entry.id as string,
+      name: entry.name as string,
+      emoji: typeof entry.emoji === 'string' ? entry.emoji : '📦',
+      color: typeof entry.color === 'string' ? entry.color : '#94a3b8',
+      kind: normalizeCategoryKind(entry.kind),
+    }));
+}
+
 function normalizeCategoryTargets(value: unknown): CategoryTargets {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -267,7 +289,12 @@ export const useExpenseStore = create<ExpenseState>()(
         set((state) => ({
           customCategories: [
             ...state.customCategories,
-            { ...cat, id: crypto.randomUUID(), name: cat.name.trim() },
+            {
+              ...cat,
+              id: crypto.randomUUID(),
+              name: cat.name.trim(),
+              kind: normalizeCategoryKind(cat.kind),
+            },
           ],
         })),
 
@@ -279,6 +306,8 @@ export const useExpenseStore = create<ExpenseState>()(
           const nextName =
             patch.name !== undefined ? patch.name.trim() : current.name;
           const renamed = nextName !== current.name && nextName.length > 0;
+          const nextKind =
+            patch.kind !== undefined ? normalizeCategoryKind(patch.kind) : current.kind;
 
           const customCategories = state.customCategories.map((entry) =>
             entry.id === id
@@ -287,12 +316,21 @@ export const useExpenseStore = create<ExpenseState>()(
                   ...patch,
                   id: entry.id,
                   name: nextName,
+                  kind: nextKind,
                 }
               : entry
           );
 
+          // A monthly target is meaningless once the category leaves the cash flow.
+          const clearsTarget = nextKind !== 'spending';
+
           if (!renamed) {
-            return { customCategories };
+            if (!clearsTarget) {
+              return { customCategories };
+            }
+            const categoryTargets = { ...state.categoryTargets };
+            delete categoryTargets[current.name];
+            return { customCategories, categoryTargets };
           }
 
           // Keep expense rows and merchant memory pointing at the new label.
@@ -314,6 +352,9 @@ export const useExpenseStore = create<ExpenseState>()(
           Object.entries(state.categoryTargets).forEach(([category, target]) => {
             categoryTargets[category === current.name ? nextName : category] = target;
           });
+          if (clearsTarget) {
+            delete categoryTargets[nextName];
+          }
 
           return { customCategories, months, merchantMemory, categoryTargets };
         }),
@@ -387,7 +428,7 @@ export const useExpenseStore = create<ExpenseState>()(
 
       applyImportedSettings: (customCategories, merchantMemory, categoryTargets) =>
         set((state) => ({
-          customCategories,
+          customCategories: normalizeCustomCategories(customCategories),
           merchantMemory,
           categoryTargets:
             categoryTargets !== undefined ? categoryTargets : state.categoryTargets,
@@ -409,7 +450,7 @@ export const useExpenseStore = create<ExpenseState>()(
           months: sortMonths(pruneEmptyMonths(payload.months)),
           selectedYear: payload.selectedYear,
           selectedMonth: clampMonth(payload.selectedMonth),
-          customCategories: payload.customCategories,
+          customCategories: normalizeCustomCategories(payload.customCategories),
           merchantMemory: payload.merchantMemory,
           categoryTargets: normalizeCategoryTargets(payload.categoryTargets),
         }),
@@ -486,7 +527,7 @@ export const useExpenseStore = create<ExpenseState>()(
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      version: 5,
+      version: 6,
       migrate: (persisted) => {
         const state = (persisted ?? {}) as Record<string, unknown>;
         const rawMonths = Array.isArray(state.months) ? (state.months as MonthData[]) : [];
@@ -515,7 +556,7 @@ export const useExpenseStore = create<ExpenseState>()(
           ...state,
           months,
           selectedYear,
-          customCategories: Array.isArray(state.customCategories) ? state.customCategories : [],
+          customCategories: normalizeCustomCategories(state.customCategories),
           merchantMemory:
             state.merchantMemory !== null &&
             typeof state.merchantMemory === 'object' &&

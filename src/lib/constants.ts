@@ -1,4 +1,4 @@
-import type { BuiltInCategory, CategoryType, MonthData } from '../types';
+import type { BuiltInCategory, CategoryKind, CategoryType, MonthData } from '../types';
 
 export const STORAGE_KEY = 'expense-tracker-v1';
 
@@ -9,24 +9,25 @@ export const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 export const DRIVE_BACKUP_FILE_NAME = 'budgetflow-backup.json';
 
 /** Schema version written into Drive backup JSON. */
-export const DRIVE_BACKUP_VERSION = 2 as const;
+export const DRIVE_BACKUP_VERSION = 3 as const;
 
 export interface BuiltInCategoryMeta {
   name: BuiltInCategory;
   emoji: string;
   color: string;
+  kind: CategoryKind;
 }
 
 export const BUILT_IN_CATEGORIES: BuiltInCategoryMeta[] = [
-  { name: 'דיור', emoji: '🏠', color: '#6366f1' },
-  { name: 'מזון', emoji: '🛒', color: '#10b981' },
-  { name: 'תחבורה', emoji: '🚗', color: '#f59e0b' },
-  { name: 'בריאות', emoji: '💊', color: '#ef4444' },
-  { name: 'בילויים', emoji: '🎬', color: '#8b5cf6' },
-  { name: 'ביגוד', emoji: '👕', color: '#ec4899' },
-  { name: 'חינוך', emoji: '📚', color: '#06b6d4' },
-  { name: 'חיסכון', emoji: '💰', color: '#84cc16' },
-  { name: 'אחר', emoji: '📦', color: '#94a3b8' },
+  { name: 'דיור', emoji: '🏠', color: '#6366f1', kind: 'spending' },
+  { name: 'מזון', emoji: '🛒', color: '#10b981', kind: 'spending' },
+  { name: 'תחבורה', emoji: '🚗', color: '#f59e0b', kind: 'spending' },
+  { name: 'בריאות', emoji: '💊', color: '#ef4444', kind: 'spending' },
+  { name: 'בילויים', emoji: '🎬', color: '#8b5cf6', kind: 'spending' },
+  { name: 'ביגוד', emoji: '👕', color: '#ec4899', kind: 'spending' },
+  { name: 'חינוך', emoji: '📚', color: '#06b6d4', kind: 'spending' },
+  { name: 'חיסכון', emoji: '💰', color: '#84cc16', kind: 'savings' },
+  { name: 'אחר', emoji: '📦', color: '#94a3b8', kind: 'spending' },
 ];
 
 /** @deprecated Prefer BUILT_IN_CATEGORIES — kept for existing call sites. */
@@ -34,6 +35,25 @@ export const CATEGORIES: CategoryType[] = BUILT_IN_CATEGORIES.map((entry) => ent
 
 /** Category excluded from "real" expenses — money moved to savings is not spending. */
 export const SAVINGS_CATEGORY: CategoryType = 'חיסכון';
+
+/** Hebrew labels for the category kinds — used in the manager UI and Excel settings sheet. */
+export const CATEGORY_KIND_LABELS: Record<CategoryKind, string> = {
+  spending: 'רגיל',
+  savings: 'חיסכון',
+  outOfFlow: 'חוץ-תזרים',
+};
+
+export const CATEGORY_KIND_DESCRIPTIONS: Record<CategoryKind, string> = {
+  spending: 'נספרת כהוצאה שוטפת בכל הסטטיסטיקות.',
+  savings: 'כסף שהועבר לחיסכון — לא נספר כהוצאה.',
+  outOfFlow: 'פרויקט או השקעה מתוכננים (חתונה, מקדמה לדירה) — נשמר בתיעוד אבל מוחרג מכל המדדים.',
+};
+
+/** One-click out-of-flow categories for the common planned-project cases. */
+export const OUT_OF_FLOW_PRESETS: Array<{ name: string; emoji: string; color: string }> = [
+  { name: 'חתונה', emoji: '🎁', color: '#ec4899' },
+  { name: 'דירה - מקדמה', emoji: '🏠', color: '#6366f1' },
+];
 
 export const CATEGORY_COLORS: Record<string, string> = Object.fromEntries(
   BUILT_IN_CATEGORIES.map((entry) => [entry.name, entry.color])

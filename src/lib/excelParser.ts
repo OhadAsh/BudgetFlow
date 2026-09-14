@@ -6,6 +6,7 @@ import type {
   BankIncomeTransaction,
   BankSource,
   BankTransaction,
+  CategoryKind,
   CategoryTargets,
   CategoryType,
   CustomCategory,
@@ -20,8 +21,15 @@ import type {
   SettingsImportTarget,
   SettingsParseResult,
 } from '../types';
-import { COLOR_OPTIONS, EMOJI_OPTIONS, EXCEL_HEADERS, HEBREW_MONTHS } from './constants';
 import {
+  CATEGORY_KIND_LABELS,
+  COLOR_OPTIONS,
+  EMOJI_OPTIONS,
+  EXCEL_HEADERS,
+  HEBREW_MONTHS,
+} from './constants';
+import {
+  buildCategoryKindMap,
   formatMonthYear,
   isCategoryType,
   parseAmount,
@@ -101,6 +109,7 @@ export const SETTINGS_HEADERS = {
   name: 'שם',
   emoji: "אימוג'י",
   color: 'צבע',
+  kind: 'סוג',
   merchant: 'שם עסק',
   category: 'קטגוריה',
   monthlyTarget: 'יעד חודשי',
@@ -120,6 +129,7 @@ export function exportToWorkbook(
   categoryTargets: CategoryTargets = {}
 ): XLSX.WorkBook {
   const workbook = XLSX.utils.book_new();
+  const kinds = buildCategoryKindMap(customCategories);
   const ordered = [...months].sort((a, b) => a.year - b.year || a.month - b.month);
 
   if (ordered.length === 0) {
@@ -167,7 +177,7 @@ export function exportToWorkbook(
           expense.cardLast4 ?? '',
         ]);
       });
-      rows.push([EXCEL_HEADERS.total, '', sumExpenses(month.expenses), '']);
+      rows.push([EXCEL_HEADERS.total, '', sumExpenses(month.expenses, kinds), '']);
 
       const sheet = XLSX.utils.aoa_to_sheet(rows);
       sheet['!cols'] = [
@@ -199,7 +209,7 @@ export function appendSettingsSheets(
   const existing = new Set(workbook.SheetNames.map((name) => normalizeSpaces(name)));
   if (!existing.has(SETTINGS_SHEET_NAMES.categories)) {
     const categoriesSheet = XLSX.utils.aoa_to_sheet(buildCategoriesSheetRows(customCategories));
-    categoriesSheet['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 12 }];
+    categoriesSheet['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 12 }, { wch: 14 }];
     XLSX.utils.book_append_sheet(workbook, categoriesSheet, SETTINGS_SHEET_NAMES.categories);
   }
   if (!existing.has(SETTINGS_SHEET_NAMES.merchants)) {
@@ -239,9 +249,21 @@ export function exportSettingsToWorkbook(
 }
 
 function buildCategoriesSheetRows(customCategories: CustomCategory[]): SheetRow[] {
-  const rows: SheetRow[] = [[SETTINGS_HEADERS.name, SETTINGS_HEADERS.emoji, SETTINGS_HEADERS.color]];
+  const rows: SheetRow[] = [
+    [
+      SETTINGS_HEADERS.name,
+      SETTINGS_HEADERS.emoji,
+      SETTINGS_HEADERS.color,
+      SETTINGS_HEADERS.kind,
+    ],
+  ];
   customCategories.forEach((entry) => {
-    rows.push([entry.name, entry.emoji, entry.color]);
+    rows.push([
+      entry.name,
+      entry.emoji,
+      entry.color,
+      CATEGORY_KIND_LABELS[entry.kind] ?? CATEGORY_KIND_LABELS.spending,
+    ]);
   });
   return rows;
 }
@@ -303,10 +325,20 @@ function parseCategoriesSheetRows(rows: SheetRow[]): SettingsImportCategory[] {
       name,
       emoji: emoji.length > 0 ? emoji : defaultEmoji,
       color: color.length > 0 ? color : defaultColor,
+      kind: parseCategoryKindLabel(row[3]),
     });
   });
 
   return result;
+}
+
+/** Reads the Hebrew "סוג" cell back into a kind — files without the column stay regular. */
+function parseCategoryKindLabel(value: Cell): CategoryKind {
+  const label = toSafeString(value).trim();
+  const match = (Object.keys(CATEGORY_KIND_LABELS) as CategoryKind[]).find(
+    (kind) => CATEGORY_KIND_LABELS[kind] === label
+  );
+  return match ?? 'spending';
 }
 
 function parseMerchantsSheetRows(rows: SheetRow[]): SettingsImportMerchant[] {

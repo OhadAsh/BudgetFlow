@@ -49,7 +49,7 @@ function applyCategories(
       if (mode === 'replace') {
         next = next.map((entry) =>
           entry.id === existing.id
-            ? { ...entry, name, emoji: row.emoji, color: row.color }
+            ? { ...entry, name, emoji: row.emoji, color: row.color, kind: row.kind }
             : entry
         );
       }
@@ -60,7 +60,10 @@ function applyCategories(
       return;
     }
 
-    next = [...next, { id: crypto.randomUUID(), name, emoji: row.emoji, color: row.color }];
+    next = [
+      ...next,
+      { id: crypto.randomUUID(), name, emoji: row.emoji, color: row.color, kind: row.kind },
+    ];
   });
 
   return next;

@@ -15,7 +15,9 @@ describe('Drive backup payload', () => {
       months: [{ year: 2026, month: 2, income: [], expenses: [] }],
       selectedYear: 2026,
       selectedMonth: 2,
-      customCategories: [{ id: '1', name: 'בזבוזים', emoji: '🛍️', color: '#f00' }],
+      customCategories: [
+        { id: '1', name: 'בזבוזים', emoji: '🛍️', color: '#f00', kind: 'spending' },
+      ],
       merchantMemory: { פיגל: 'בזבוזים' },
       categoryTargets: { בזבוזים: 500 },
       openRouterApiKey: 'sk-test-key',
@@ -84,7 +86,7 @@ describe('applyFullBackupRestore', () => {
       ],
       selectedYear: 2025,
       selectedMonth: 12,
-      customCategories: [{ id: 'c', name: 'ישן', emoji: 'x', color: '#000' }],
+      customCategories: [{ id: 'c', name: 'ישן', emoji: 'x', color: '#000', kind: 'spending' }],
       merchantMemory: { old: 'אחר' },
       categoryTargets: { אחר: 9 },
     });

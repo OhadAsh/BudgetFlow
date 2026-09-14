@@ -12,11 +12,21 @@ export type BuiltInCategory =
 /** Runtime category — built-in or a user-defined custom name. */
 export type CategoryType = string;
 
+/**
+ * How a category participates in the monthly cash flow.
+ * - `spending` — ordinary expense, counted in totals and averages.
+ * - `savings` — money moved aside, not spending (the built-in 'חיסכון' behaviour).
+ * - `outOfFlow` — a planned project / investment (wedding, apartment down payment).
+ *   Kept in the records and in exports, but excluded from every statistic.
+ */
+export type CategoryKind = 'spending' | 'savings' | 'outOfFlow';
+
 export interface CustomCategory {
   id: string;
   name: string;
   emoji: string;
   color: string;
+  kind: CategoryKind;
 }
 
 /** merchantName (normalized) → categoryName */
@@ -83,9 +93,13 @@ export interface MonthStats {
   totalIncome: number;
   totalExpenses: number;
   totalSavingsCategory: number;
+  /** Sum of out-of-flow categories this month — excluded from totalExpenses and netSaved. */
+  totalOutOfFlow: number;
   netSaved: number;
   savingsRate: number;
   byCategory: Record<CategoryType, number>;
+  /** Out-of-flow spending keyed by category name — for the project cost meter. */
+  outOfFlowByCategory: Record<CategoryType, number>;
   expenseCount: number;
   activeCategoryCount: number;
   hasData: boolean;
@@ -100,6 +114,25 @@ export interface AnnualStats {
   bestMonth: { month: number; saved: number };
   worstMonth: { month: number; saved: number };
   byCategory: Record<CategoryType, number>;
+  /** Out-of-flow spending for the year — never part of totalExpenses. */
+  totalOutOfFlow: number;
+  /** Out-of-flow spending for the year keyed by category name. */
+  outOfFlowByCategory: Record<CategoryType, number>;
+}
+
+/** One out-of-flow category summarised as a project cost meter. */
+export interface OutOfFlowProject {
+  category: CategoryType;
+  emoji: string;
+  color: string;
+  /** Spent within the requested year. */
+  yearTotal: number;
+  /** Spent across every month in the store. */
+  allTimeTotal: number;
+  /** Number of expense rows across every month. */
+  paymentCount: number;
+  /** ISO date of the latest payment, or undefined when no row carries a date. */
+  lastPaymentDate?: string;
 }
 
 export interface CategoryBreakdownItem {
@@ -165,6 +198,7 @@ export interface SettingsImportCategory {
   name: string;
   emoji: string;
   color: string;
+  kind: CategoryKind;
 }
 
 /** One merchant-memory row from a settings Excel sheet. */

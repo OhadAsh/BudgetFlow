@@ -1,4 +1,11 @@
-import type { CategoryType, CustomCategory, Expense, MerchantMemory, MonthData } from '../types';
+import type {
+  CategoryKind,
+  CategoryType,
+  CustomCategory,
+  Expense,
+  MerchantMemory,
+  MonthData,
+} from '../types';
 import {
   BUILT_IN_CATEGORIES,
   CATEGORIES,
@@ -13,6 +20,7 @@ export interface CategoryOption {
   name: string;
   emoji: string;
   color: string;
+  kind: CategoryKind;
 }
 
 /** Built-in + user-defined categories for Selects and badges. */
@@ -21,11 +29,13 @@ export function getAllCategories(customCategories: CustomCategory[]): CategoryOp
     name: entry.name,
     emoji: entry.emoji,
     color: entry.color,
+    kind: entry.kind,
   }));
   const custom = customCategories.map((entry) => ({
     name: entry.name,
     emoji: entry.emoji,
     color: entry.color,
+    kind: entry.kind ?? 'spending',
   }));
   return [...builtIn, ...custom];
 }
@@ -40,7 +50,67 @@ export function resolveCategoryMeta(
     name: category.length > 0 ? category : 'אחר',
     emoji: CATEGORY_ICONS['אחר'] ?? '📦',
     color: CATEGORY_COLORS['אחר'] ?? '#94a3b8',
+    kind: 'spending',
   };
+}
+
+/**
+ * Category names grouped by the kinds that are excluded from spending statistics.
+ * Passed into the aggregation helpers so they never need the whole category list.
+ */
+export interface CategoryKindMap {
+  readonly savings: ReadonlySet<string>;
+  readonly outOfFlow: ReadonlySet<string>;
+}
+
+/**
+ * Built-in kinds only. Aggregations called without a map behave exactly as they did
+ * before category kinds existed — savings excluded, nothing else.
+ */
+export const DEFAULT_CATEGORY_KINDS: CategoryKindMap = {
+  savings: new Set(
+    BUILT_IN_CATEGORIES.filter((entry) => entry.kind === 'savings').map((entry) => entry.name)
+  ),
+  outOfFlow: new Set<string>(),
+};
+
+export function buildCategoryKindMap(customCategories: CustomCategory[]): CategoryKindMap {
+  const savings = new Set<string>(DEFAULT_CATEGORY_KINDS.savings);
+  const outOfFlow = new Set<string>();
+
+  customCategories.forEach((entry) => {
+    const name = entry.name.trim();
+    if (name.length === 0) return;
+    if (entry.kind === 'savings') {
+      savings.add(name);
+    } else if (entry.kind === 'outOfFlow') {
+      outOfFlow.add(name);
+    }
+  });
+
+  return { savings, outOfFlow };
+}
+
+export function resolveCategoryKind(
+  category: string,
+  customCategories: CustomCategory[] = []
+): CategoryKind {
+  return resolveCategoryMeta(category, customCategories).kind;
+}
+
+/** Narrows a raw UI value (SegmentedControl, Select) to a kind — unknown values stay regular. */
+export function toCategoryKind(value: string): CategoryKind {
+  return value === 'savings' || value === 'outOfFlow' ? value : 'spending';
+}
+
+/** True when the category is a planned project / investment kept out of the cash flow. */
+export function isOutOfFlowCategory(category: string, kinds: CategoryKindMap): boolean {
+  return kinds.outOfFlow.has(category);
+}
+
+/** True when the category should never contribute to spending totals or averages. */
+export function isExcludedFromSpending(category: string, kinds: CategoryKindMap): boolean {
+  return kinds.savings.has(category) || kinds.outOfFlow.has(category);
 }
 
 /** Normalize merchant keys for merchantMemory lookups. */

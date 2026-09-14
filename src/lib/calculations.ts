@@ -8,9 +8,17 @@ import type {
   MonthData,
   MonthStats,
   MonthlySeriesPoint,
+  OutOfFlowProject,
 } from '../types';
-import { CATEGORIES, SAVINGS_CATEGORY } from './constants';
-import { clampMonth, getShortMonthName, resolveCategoryMeta } from './utils';
+import { CATEGORIES } from './constants';
+import type { CategoryKindMap } from './utils';
+import {
+  DEFAULT_CATEGORY_KINDS,
+  buildCategoryKindMap,
+  clampMonth,
+  getShortMonthName,
+  resolveCategoryMeta,
+} from './utils';
 
 /** Options for year-level aggregations and chart series. */
 export interface AggregationOptions {
@@ -20,6 +28,11 @@ export interface AggregationOptions {
    * Default false — preserves legacy behaviour when callers omit the flag.
    */
   excludeOutliers?: boolean;
+  /**
+   * Category kinds resolved from the user's custom categories.
+   * Omitted means built-in kinds only (savings excluded, no out-of-flow categories).
+   */
+  kinds?: CategoryKindMap;
 }
 
 export function emptyCategoryRecord(): Record<CategoryType, number> {
@@ -33,16 +46,38 @@ export function sumIncome(income: IncomeSource[]): number {
   return income.reduce((total, source) => total + safeNumber(source.amount), 0);
 }
 
-/** Spending only — money routed to the savings category is not an expense. */
-export function sumExpenses(expenses: Expense[]): number {
+/**
+ * Spending only — money routed to a savings category is not an expense, and
+ * out-of-flow categories (planned projects / investments) are outside the cash flow.
+ */
+export function sumExpenses(
+  expenses: Expense[],
+  kinds: CategoryKindMap = DEFAULT_CATEGORY_KINDS
+): number {
   return expenses
-    .filter((expense) => expense.category !== SAVINGS_CATEGORY)
+    .filter(
+      (expense) =>
+        !kinds.savings.has(expense.category) && !kinds.outOfFlow.has(expense.category)
+    )
     .reduce((total, expense) => total + safeNumber(expense.amount), 0);
 }
 
-export function sumSavingsCategory(expenses: Expense[]): number {
+export function sumSavingsCategory(
+  expenses: Expense[],
+  kinds: CategoryKindMap = DEFAULT_CATEGORY_KINDS
+): number {
   return expenses
-    .filter((expense) => expense.category === SAVINGS_CATEGORY)
+    .filter((expense) => kinds.savings.has(expense.category))
+    .reduce((total, expense) => total + safeNumber(expense.amount), 0);
+}
+
+/** Planned projects / investments — recorded, but deliberately outside every statistic. */
+export function sumOutOfFlow(
+  expenses: Expense[],
+  kinds: CategoryKindMap = DEFAULT_CATEGORY_KINDS
+): number {
+  return expenses
+    .filter((expense) => kinds.outOfFlow.has(expense.category))
     .reduce((total, expense) => total + safeNumber(expense.amount), 0);
 }
 
@@ -85,14 +120,25 @@ export function createEmptyMonth(year: number, month: number): MonthData {
   return { year, month: clampMonth(month), income: [], expenses: [] };
 }
 
-export function getMonthStats(month: MonthData | undefined): MonthStats {
+export function getMonthStats(
+  month: MonthData | undefined,
+  kinds: CategoryKindMap = DEFAULT_CATEGORY_KINDS
+): MonthStats {
   const income = month?.income ?? [];
   const expenses = month?.expenses ?? [];
   const totalIncome = sumIncome(income);
-  const totalExpenses = sumExpenses(expenses);
-  const totalSavingsCategory = sumSavingsCategory(expenses);
+  const totalExpenses = sumExpenses(expenses, kinds);
+  const totalSavingsCategory = sumSavingsCategory(expenses, kinds);
+  const totalOutOfFlow = sumOutOfFlow(expenses, kinds);
   const netSaved = calcNetSaved(totalIncome, totalExpenses);
   const byCategory = groupByCategory(expenses);
+
+  const outOfFlowByCategory: Record<CategoryType, number> = {};
+  expenses.forEach((expense) => {
+    if (!kinds.outOfFlow.has(expense.category)) return;
+    outOfFlowByCategory[expense.category] =
+      (outOfFlowByCategory[expense.category] ?? 0) + safeNumber(expense.amount);
+  });
 
   return {
     year: month?.year ?? 0,
@@ -100,12 +146,18 @@ export function getMonthStats(month: MonthData | undefined): MonthStats {
     totalIncome,
     totalExpenses,
     totalSavingsCategory,
+    totalOutOfFlow,
     netSaved,
     savingsRate: calcSavingsRate(netSaved, totalIncome),
     byCategory,
+    outOfFlowByCategory,
     expenseCount: expenses.length,
-    activeCategoryCount: Object.keys(byCategory).filter((category) => byCategory[category] > 0)
-      .length,
+    activeCategoryCount: Object.keys(byCategory).filter(
+      (category) =>
+        byCategory[category] > 0 &&
+        !kinds.savings.has(category) &&
+        !kinds.outOfFlow.has(category)
+    ).length,
     hasData: income.length > 0 || expenses.length > 0,
   };
 }
@@ -115,11 +167,15 @@ export function getCategoryBreakdown(
   expenses: Expense[],
   customCategories: CustomCategory[] = []
 ): CategoryBreakdownItem[] {
+  const kinds = buildCategoryKindMap(customCategories);
   const totals = groupByCategory(expenses);
-  const spendingTotal = sumExpenses(expenses);
+  const spendingTotal = sumExpenses(expenses, kinds);
 
   return Object.keys(totals)
-    .filter((category) => category !== SAVINGS_CATEGORY && totals[category] > 0)
+    .filter(
+      (category) =>
+        !kinds.savings.has(category) && !kinds.outOfFlow.has(category) && totals[category] > 0
+    )
     .map((category) => {
       const meta = resolveCategoryMeta(category, customCategories);
       return {
@@ -144,11 +200,12 @@ export function getMonthlySeries(
   options: AggregationOptions = {}
 ): MonthlySeriesPoint[] {
   const excludeOutliers = options.excludeOutliers === true;
+  const kinds = options.kinds ?? DEFAULT_CATEGORY_KINDS;
 
   return Array.from({ length: 12 }, (_, index) => {
     const monthNumber = index + 1;
     const monthData = findMonth(months, year, monthNumber);
-    const stats = getMonthStats(monthData);
+    const stats = getMonthStats(monthData, kinds);
     const outlier = isMonthOutlier(monthData);
     const excluded = excludeOutliers && outlier;
 
@@ -177,7 +234,10 @@ export function getAnnualStats(
   const totalSaved = calcNetSaved(totalIncome, totalExpenses);
 
   const excludeOutliers = options.excludeOutliers === true;
+  const kinds = options.kinds ?? DEFAULT_CATEGORY_KINDS;
   const byCategory = emptyCategoryRecord();
+  const outOfFlowByCategory: Record<CategoryType, number> = {};
+  let totalOutOfFlow = 0;
   months
     .filter((month) => month.year === year)
     .filter((month) => !(excludeOutliers && isMonthOutlier(month)))
@@ -185,6 +245,10 @@ export function getAnnualStats(
       month.expenses.forEach((expense) => {
         const key = expense.category.trim().length > 0 ? expense.category : 'אחר';
         byCategory[key] = (byCategory[key] ?? 0) + safeNumber(expense.amount);
+        if (kinds.outOfFlow.has(expense.category)) {
+          outOfFlowByCategory[key] = (outOfFlowByCategory[key] ?? 0) + safeNumber(expense.amount);
+          totalOutOfFlow += safeNumber(expense.amount);
+        }
       });
     });
 
@@ -208,7 +272,79 @@ export function getAnnualStats(
     bestMonth: best ?? { month: 0, saved: 0 },
     worstMonth: worst ?? { month: 0, saved: 0 },
     byCategory,
+    totalOutOfFlow,
+    outOfFlowByCategory,
   };
+}
+
+/**
+ * Project cost meter — one row per out-of-flow category with its yearly and
+ * all-time totals. Outlier months are never skipped here: a project's real cost
+ * does not change because a month was tagged as unusual.
+ */
+export function getOutOfFlowProjects(
+  months: MonthData[],
+  customCategories: CustomCategory[],
+  year: number
+): OutOfFlowProject[] {
+  const kinds = buildCategoryKindMap(customCategories);
+  if (kinds.outOfFlow.size === 0) return [];
+
+  const totals = new Map<string, ProjectAccumulator>();
+
+  months.forEach((month) => {
+    month.expenses.forEach((expense) => {
+      if (!kinds.outOfFlow.has(expense.category)) return;
+
+      const amount = safeNumber(expense.amount);
+      const entry = totals.get(expense.category) ?? {
+        yearTotal: 0,
+        allTimeTotal: 0,
+        paymentCount: 0,
+      };
+
+      entry.yearTotal += month.year === year ? amount : 0;
+      entry.allTimeTotal += amount;
+      entry.paymentCount += 1;
+      const latest = laterDate(entry.lastPaymentDate, expense.date);
+      if (latest !== undefined) {
+        entry.lastPaymentDate = latest;
+      }
+
+      totals.set(expense.category, entry);
+    });
+  });
+
+  return Array.from(totals.entries())
+    .map(([category, entry]) => {
+      const meta = resolveCategoryMeta(category, customCategories);
+      return {
+        category,
+        emoji: meta.emoji,
+        color: meta.color,
+        yearTotal: entry.yearTotal,
+        allTimeTotal: entry.allTimeTotal,
+        paymentCount: entry.paymentCount,
+        ...(entry.lastPaymentDate !== undefined
+          ? { lastPaymentDate: entry.lastPaymentDate }
+          : {}),
+      };
+    })
+    .sort((a, b) => b.allTimeTotal - a.allTimeTotal);
+}
+
+interface ProjectAccumulator {
+  yearTotal: number;
+  allTimeTotal: number;
+  paymentCount: number;
+  lastPaymentDate?: string;
+}
+
+/** Latest of two optional ISO dates; undefined when neither is set. */
+function laterDate(current: string | undefined, candidate: string | undefined): string | undefined {
+  if (candidate === undefined || candidate.length === 0) return current;
+  if (current === undefined || current.length === 0) return candidate;
+  return candidate.localeCompare(current) > 0 ? candidate : current;
 }
 
 /** Sorted descending years that have data, always including the current year. */

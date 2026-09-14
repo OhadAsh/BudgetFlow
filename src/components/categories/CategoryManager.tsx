@@ -8,6 +8,7 @@ import {
   Group,
   Modal,
   NumberInput,
+  SegmentedControl,
   Select,
   SimpleGrid,
   Stack,
@@ -19,12 +20,15 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconPlus, IconTags, IconTrash, IconX } from '@tabler/icons-react';
-import type { SettingsImportMode, SettingsParseResult } from '../../types';
+import type { CategoryKind, SettingsImportMode, SettingsParseResult } from '../../types';
 import {
   BUILT_IN_CATEGORIES,
+  CATEGORY_KIND_DESCRIPTIONS,
+  CATEGORY_KIND_LABELS,
   COLOR_OPTIONS,
   COLORS,
   EMOJI_OPTIONS,
+  OUT_OF_FLOW_PRESETS,
 } from '../../lib/constants';
 import {
   downloadWorkbook,
@@ -41,8 +45,15 @@ import {
   isCategoryType,
   isExcelFile,
   matchesSearchQuery,
+  toCategoryKind,
 } from '../../lib/utils';
 import { useExpenseStore } from '../../store/useExpenseStore';
+
+const KIND_SEGMENTS: Array<{ value: CategoryKind; label: string }> = [
+  { value: 'spending', label: CATEGORY_KIND_LABELS.spending },
+  { value: 'savings', label: CATEGORY_KIND_LABELS.savings },
+  { value: 'outOfFlow', label: CATEGORY_KIND_LABELS.outOfFlow },
+];
 
 interface CategoryManagerProps {
   /** When true, no toolbar button is rendered — open via `opened` / `onOpenedChange`. */
@@ -83,6 +94,7 @@ export function CategoryManager({
   const [newName, setNewName] = useState<string>('');
   const [newEmoji, setNewEmoji] = useState<string>(EMOJI_OPTIONS[0]);
   const [newColor, setNewColor] = useState<string>(COLOR_OPTIONS[0]);
+  const [newKind, setNewKind] = useState<CategoryKind>('spending');
   const [memoryQuery, setMemoryQuery] = useState<string>('');
   const [settingsPreview, setSettingsPreview] = useState<SettingsParseResult | null>(null);
   const [importLoading, setImportLoading] = useState<boolean>(false);
@@ -108,6 +120,7 @@ export function CategoryManager({
     setNewName('');
     setNewEmoji(EMOJI_OPTIONS[0]);
     setNewColor(COLOR_OPTIONS[0]);
+    setNewKind('spending');
   };
 
   const handleAdd = (): void => {
@@ -128,13 +141,30 @@ export function CategoryManager({
       });
       return;
     }
-    addCustomCategory({ name, emoji: newEmoji, color: newColor });
+    addCustomCategory({ name, emoji: newEmoji, color: newColor, kind: newKind });
     notifications.show({
       color: 'emerald',
       title: 'קטגוריה נוספה',
-      message: `${newEmoji} ${name}`,
+      message: `${newEmoji} ${name} · ${CATEGORY_KIND_LABELS[newKind]}`,
     });
     resetAddForm();
+  };
+
+  const handleAddPreset = (preset: (typeof OUT_OF_FLOW_PRESETS)[number]): void => {
+    if (isCategoryNameTaken(preset.name, customCategories)) {
+      notifications.show({
+        color: 'yellow',
+        title: 'הקטגוריה קיימת',
+        message: `כבר קיימת קטגוריה בשם ״${preset.name}״.`,
+      });
+      return;
+    }
+    addCustomCategory({ ...preset, kind: 'outOfFlow' });
+    notifications.show({
+      color: 'emerald',
+      title: 'קטגוריית חוץ-תזרים נוספה',
+      message: `${preset.emoji} ${preset.name} — ההוצאות שתשייך אליה לא ייספרו במדדים.`,
+    });
   };
 
   const close = (): void => {
@@ -366,9 +396,28 @@ export function CategoryManager({
                   </Text>
                 )}
 
+                <Group gap="xs" wrap="wrap" mb="sm">
+                  <Text fz="xs" c="dimmed">
+                    יצירה מהירה לפרויקט חוץ-תזרים:
+                  </Text>
+                  {OUT_OF_FLOW_PRESETS.map((preset) => (
+                    <Button
+                      key={preset.name}
+                      size="compact-xs"
+                      variant="light"
+                      color="gray"
+                      radius="xl"
+                      onClick={() => handleAddPreset(preset)}
+                      aria-label={`הוסף קטגוריית חוץ-תזרים ${preset.name}`}
+                    >
+                      {`${preset.emoji} ${preset.name}`}
+                    </Button>
+                  ))}
+                </Group>
+
                 <Stack gap="sm">
                   {customCategories.map((entry) => (
-                    <Stack key={entry.id} gap={4}>
+                    <Stack key={entry.id} gap={6}>
                       <Group wrap="nowrap" gap="xs" align="center">
                         <Text fz="lg" w={28} ta="center">
                           {entry.emoji}
@@ -416,20 +465,37 @@ export function CategoryManager({
                           <IconTrash size={15} />
                         </ActionIcon>
                       </Group>
-                      <NumberInput
-                        size="xs"
-                        ms={36}
-                        maw={180}
-                        prefix="₪"
-                        min={0}
-                        decimalScale={0}
-                        thousandSeparator=","
-                        hideControls
-                        placeholder="יעד חודשי (אופציונלי)"
-                        aria-label={`יעד חודשי ל${entry.name}`}
-                        value={categoryTargets[entry.name] ?? ''}
-                        onChange={(value) => handleTargetChange(entry.name, value)}
-                      />
+                      <Group ms={36} gap="xs" wrap="wrap" align="center">
+                        <SegmentedControl
+                          size="xs"
+                          radius="xl"
+                          data={KIND_SEGMENTS}
+                          value={entry.kind}
+                          onChange={(value) =>
+                            updateCustomCategory(entry.id, { kind: toCategoryKind(value) })
+                          }
+                          aria-label={`סוג הקטגוריה ${entry.name}`}
+                        />
+                        {entry.kind === 'spending' ? (
+                          <NumberInput
+                            size="xs"
+                            maw={180}
+                            prefix="₪"
+                            min={0}
+                            decimalScale={0}
+                            thousandSeparator=","
+                            hideControls
+                            placeholder="יעד חודשי (אופציונלי)"
+                            aria-label={`יעד חודשי ל${entry.name}`}
+                            value={categoryTargets[entry.name] ?? ''}
+                            onChange={(value) => handleTargetChange(entry.name, value)}
+                          />
+                        ) : (
+                          <Text fz="xs" c="dimmed" style={{ flex: 1, minWidth: 180 }}>
+                            {CATEGORY_KIND_DESCRIPTIONS[entry.kind]}
+                          </Text>
+                        )}
+                      </Group>
                     </Stack>
                   ))}
                 </Stack>
@@ -498,6 +564,24 @@ export function CategoryManager({
                             />
                           ))}
                         </Group>
+                      </Box>
+
+                      <Box>
+                        <Text size="xs" c="dimmed" mb={6}>
+                          סוג הקטגוריה
+                        </Text>
+                        <SegmentedControl
+                          size="xs"
+                          radius="xl"
+                          fullWidth
+                          data={KIND_SEGMENTS}
+                          value={newKind}
+                          onChange={(value) => setNewKind(toCategoryKind(value))}
+                          aria-label="סוג הקטגוריה החדשה"
+                        />
+                        <Text fz="xs" c="dimmed" mt={6}>
+                          {CATEGORY_KIND_DESCRIPTIONS[newKind]}
+                        </Text>
                       </Box>
 
                       <Group justify="flex-end" gap="xs">

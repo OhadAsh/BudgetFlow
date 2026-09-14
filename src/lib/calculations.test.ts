@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { MonthData } from '../types';
+import type { CustomCategory, Expense, MonthData } from '../types';
 import {
   getAnnualStats,
+  getCategoryBreakdown,
   getMonthlySeries,
   getMonthStats,
+  getOutOfFlowProjects,
+  sumExpenses,
+  sumOutOfFlow,
 } from './calculations';
+import { buildCategoryKindMap } from './utils';
 
 function month(
   year: number,
@@ -139,5 +144,130 @@ describe('calculations — outlier exclusion', () => {
     expect(include.byCategory['מזון']).toBe(1000);
     expect(exclude.byCategory['בילויים'] ?? 0).toBe(0);
     expect(exclude.byCategory['מזון']).toBe(1000);
+  });
+});
+
+describe('calculations — out-of-flow categories', () => {
+  const wedding: CustomCategory = {
+    id: 'w',
+    name: 'חתונה',
+    emoji: '🎁',
+    color: '#ec4899',
+    kind: 'outOfFlow',
+  };
+  const customCategories: CustomCategory[] = [wedding];
+  const kinds = buildCategoryKindMap(customCategories);
+
+  function expense(id: string, category: string, amount: number, date?: string): Expense {
+    return {
+      id,
+      category,
+      description: category,
+      amount,
+      ...(date !== undefined ? { date } : {}),
+    };
+  }
+
+  const marchMonth: MonthData = {
+    year: 2026,
+    month: 3,
+    income: [{ id: 'i-3', label: 'משכורת', amount: 20000 }],
+    expenses: [
+      expense('e-1', 'מזון', 2000, '2026-03-05'),
+      expense('e-2', 'דיור', 4000, '2026-03-01'),
+      expense('e-3', 'חיסכון', 1500, '2026-03-10'),
+      expense('e-4', 'חתונה', 11000, '2026-03-20'),
+    ],
+  };
+
+  it('keeps out-of-flow spending out of expenses, savings, and the savings rate', () => {
+    const stats = getMonthStats(marchMonth, kinds);
+
+    expect(stats.totalExpenses).toBe(6000);
+    expect(stats.totalSavingsCategory).toBe(1500);
+    expect(stats.totalOutOfFlow).toBe(11000);
+    expect(stats.netSaved).toBe(14000);
+    expect(stats.savingsRate).toBe(70);
+    expect(stats.outOfFlowByCategory).toEqual({ חתונה: 11000 });
+    // The row itself is still there — only the statistics ignore it.
+    expect(stats.expenseCount).toBe(4);
+    expect(stats.activeCategoryCount).toBe(2);
+  });
+
+  it('omits out-of-flow categories from the pie breakdown and its percentage base', () => {
+    const breakdown = getCategoryBreakdown(marchMonth.expenses, customCategories);
+
+    expect(breakdown.map((item) => item.category)).toEqual(['דיור', 'מזון']);
+    expect(breakdown[0].percentage).toBeCloseTo((4000 / 6000) * 100);
+    expect(breakdown[1].percentage).toBeCloseTo((2000 / 6000) * 100);
+  });
+
+  it('sums a project across months and years into a cost meter', () => {
+    const months: MonthData[] = [
+      {
+        year: 2025,
+        month: 11,
+        income: [],
+        expenses: [expense('p-0', 'חתונה', 3000, '2025-11-02')],
+      },
+      marchMonth,
+      {
+        year: 2026,
+        month: 5,
+        income: [{ id: 'i-5', label: 'משכורת', amount: 20000 }],
+        expenses: [
+          expense('p-1', 'חתונה', 9000, '2026-05-12'),
+          expense('p-2', 'מזון', 1800, '2026-05-03'),
+        ],
+      },
+    ];
+
+    const projects = getOutOfFlowProjects(months, customCategories, 2026);
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0].category).toBe('חתונה');
+    expect(projects[0].yearTotal).toBe(20000);
+    expect(projects[0].allTimeTotal).toBe(23000);
+    expect(projects[0].paymentCount).toBe(3);
+    expect(projects[0].lastPaymentDate).toBe('2026-05-12');
+
+    const annual = getAnnualStats(months, 2026, { kinds });
+    expect(annual.totalExpenses).toBe(7800);
+    expect(annual.totalOutOfFlow).toBe(20000);
+    expect(annual.outOfFlowByCategory).toEqual({ חתונה: 20000 });
+  });
+
+  it('returns no projects when no category is tagged as out-of-flow', () => {
+    expect(getOutOfFlowProjects([marchMonth], [], 2026)).toEqual([]);
+  });
+
+  it('stacks with month-level outlier exclusion without conflict', () => {
+    const months: MonthData[] = [
+      marchMonth,
+      {
+        year: 2026,
+        month: 4,
+        isOutlier: true,
+        outlierNote: 'אשפוז',
+        income: [{ id: 'i-4', label: 'משכורת', amount: 20000 }],
+        expenses: [expense('o-1', 'בריאות', 8000), expense('o-2', 'חתונה', 5000)],
+      },
+    ];
+
+    const includeOutliers = getAnnualStats(months, 2026, { kinds });
+    const excludeOutliers = getAnnualStats(months, 2026, { kinds, excludeOutliers: true });
+
+    expect(includeOutliers.totalExpenses).toBe(14000);
+    expect(includeOutliers.totalOutOfFlow).toBe(16000);
+
+    expect(excludeOutliers.totalExpenses).toBe(6000);
+    expect(excludeOutliers.totalOutOfFlow).toBe(11000);
+  });
+
+  it('sumExpenses without a kind map behaves like before category kinds existed', () => {
+    expect(sumExpenses(marchMonth.expenses)).toBe(17000);
+    expect(sumExpenses(marchMonth.expenses, kinds)).toBe(6000);
+    expect(sumOutOfFlow(marchMonth.expenses)).toBe(0);
+    expect(sumOutOfFlow(marchMonth.expenses, kinds)).toBe(11000);
   });
 });

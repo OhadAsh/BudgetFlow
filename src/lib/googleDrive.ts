@@ -3,6 +3,7 @@ import {
   DRIVE_BACKUP_VERSION,
 } from './constants';
 import type {
+  CategoryKind,
   CategoryTargets,
   CustomCategory,
   DriveBackupPayload,
@@ -271,7 +272,13 @@ function parseCustomCategory(value: unknown): CustomCategory | null {
     name: value.name,
     emoji: value.emoji,
     color: value.color,
+    kind: parseCategoryKind(value.kind),
   };
+}
+
+/** Backups written before category kinds existed restore as ordinary spending. */
+function parseCategoryKind(value: unknown): CategoryKind {
+  return value === 'savings' || value === 'outOfFlow' ? value : 'spending';
 }
 
 function parseMerchantMemory(value: unknown): MerchantMemory {

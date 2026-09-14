@@ -54,7 +54,7 @@ function makeMonth(
 
 describe('useExpenseStore.clearMonth', () => {
   const customCategories: CustomCategory[] = [
-    { id: 'cat-1', name: 'חיות', emoji: '🐾', color: '#6366f1' },
+    { id: 'cat-1', name: 'חיות', emoji: '🐾', color: '#6366f1', kind: 'spending' },
   ];
   const merchantMemory = { 'סופר יין': 'מזון' };
   const categoryTargets = { מזון: 2500, דיור: 5000 };

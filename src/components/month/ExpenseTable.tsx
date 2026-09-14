@@ -36,6 +36,18 @@ const EXPENSE_LIST_MIN_HEIGHT = 260;
 /** Mobile has no charts column to align with, so the list keeps a viewport-relative height. */
 const MOBILE_EXPENSE_LIST_HEIGHT = 'min(70vh, 620px)';
 
+/** Footer caption listing what the displayed total contains but the statistics ignore. */
+function buildExcludedNote(savings: number, outOfFlow: number): string | null {
+  const parts: string[] = [];
+  if (savings > 0) {
+    parts.push(`${formatCurrency(savings)} להפקדה לחיסכון`);
+  }
+  if (outOfFlow > 0) {
+    parts.push(`${formatCurrency(outOfFlow)} חוץ-תזרים`);
+  }
+  return parts.length > 0 ? `כולל ${parts.join(' ו-')}` : null;
+}
+
 const stickyHeaderCellStyle: CSSProperties = {
   position: 'sticky',
   top: 0,
@@ -175,8 +187,11 @@ export function ExpenseTable(): JSX.Element {
     });
   };
 
-  const totalWithSavings = stats.totalExpenses + stats.totalSavingsCategory;
-  const displayTotal = stats.totalSavingsCategory > 0 ? totalWithSavings : stats.totalExpenses;
+  // Savings deposits and out-of-flow projects are real money that left the account,
+  // so the list footer shows them even though no statistic counts them.
+  const excludedFromStats = stats.totalSavingsCategory + stats.totalOutOfFlow;
+  const displayTotal = stats.totalExpenses + excludedFromStats;
+  const excludedNote = buildExcludedNote(stats.totalSavingsCategory, stats.totalOutOfFlow);
   const hasExpenses = monthData.expenses.length > 0;
   const showsList = hasExpenses && filteredExpenses.length > 0;
 
@@ -348,9 +363,7 @@ export function ExpenseTable(): JSX.Element {
           </Button>
           <Box style={{ minWidth: 0 }}>
             <Text fz="xs" c={COLORS.textSecondary} ta="end">
-              {stats.totalSavingsCategory > 0
-                ? `כולל ${formatCurrency(stats.totalSavingsCategory)} להפקדה לחיסכון`
-                : 'סה"כ הוצאות'}
+              {excludedNote ?? 'סה"כ הוצאות'}
             </Text>
             <Text
               fw={700}

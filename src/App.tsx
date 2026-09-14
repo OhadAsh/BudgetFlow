@@ -13,6 +13,7 @@ import { CategoryPieChart } from './components/charts/CategoryPieChart';
 import { SavingsBarChart } from './components/charts/SavingsBarChart';
 import { TrendLineChart } from './components/charts/TrendLineChart';
 import { AnnualSummary } from './components/annual/AnnualSummary';
+import { ProjectsSummary } from './components/annual/ProjectsSummary';
 import { DailyInsightBubble } from './components/insights/DailyInsightBubble';
 import { LocalStorageQuotaBanner } from './components/excel/LocalDataBackup';
 import { LocalDataResilienceProvider } from './components/excel/LocalDataResilienceProvider';
@@ -62,6 +63,7 @@ export default function App(): JSX.Element {
 
               <Divider color={COLORS.border} />
               <AnnualSummary />
+              <ProjectsSummary />
             </Stack>
           ) : (
             <Stack gap="md">
@@ -83,7 +85,12 @@ export default function App(): JSX.Element {
                 </>
               )}
 
-              {tab === 'annual' && <AnnualSummary />}
+              {tab === 'annual' && (
+                <>
+                  <AnnualSummary />
+                  <ProjectsSummary />
+                </>
+              )}
             </Stack>
           )}
         </Container>

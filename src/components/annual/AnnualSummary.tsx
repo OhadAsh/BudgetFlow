@@ -132,7 +132,11 @@ export function AnnualSummary(): JSX.Element {
           title='סה"כ הוצאות'
           value={annualStats.totalExpenses}
           color={COLORS.expense}
-          hint="ללא הפקדות לחיסכון"
+          hint={
+            annualStats.totalOutOfFlow > 0
+              ? `ללא הפקדות לחיסכון וללא ${formatCurrency(annualStats.totalOutOfFlow)} חוץ-תזרים`
+              : 'ללא הפקדות לחיסכון'
+          }
         />
         <StatCard
           title="נחסך"
