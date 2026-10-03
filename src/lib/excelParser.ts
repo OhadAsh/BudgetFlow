@@ -50,6 +50,8 @@ type Cell = string | number | boolean | null | undefined;
 type SheetRow = Cell[];
 
 const SHEET_NAME_LIMIT = 31;
+/** Suffix on an outlier month tab, e.g. "מאי 2026 · חריג". */
+const OUTLIER_SHEET_SUFFIX = ' · חריג';
 
 /** Soft caps after XLSX.read — byte size alone cannot stop a dense small workbook. */
 export const MAX_SHEETS_PER_WORKBOOK = 20;
@@ -138,6 +140,7 @@ export function exportToWorkbook(
   } else {
     ordered.forEach((month) => {
       const rows: SheetRow[] = [];
+      const outlierLabel = outlierMonthLabel(month);
       const incomeHeader: SheetRow = [
         EXCEL_HEADERS.category,
         EXCEL_HEADERS.description,
@@ -155,6 +158,10 @@ export function exportToWorkbook(
         EXCEL_HEADERS.cardLast4,
       ];
 
+      if (outlierLabel !== null) {
+        rows.push([outlierLabel]);
+      }
+
       rows.push([EXCEL_HEADERS.income]);
       rows.push(incomeHeader);
       month.income.forEach((source) => {
@@ -163,7 +170,11 @@ export function exportToWorkbook(
       rows.push([EXCEL_HEADERS.total, '', sumIncome(month.income), '']);
       rows.push([]);
 
-      rows.push([EXCEL_HEADERS.expenses]);
+      rows.push(
+        outlierLabel !== null
+          ? [EXCEL_HEADERS.expenses, EXCEL_HEADERS.outlierMonth]
+          : [EXCEL_HEADERS.expenses]
+      );
       rows.push(expenseHeader);
       month.expenses.forEach((expense) => {
         rows.push([
@@ -190,7 +201,11 @@ export function exportToWorkbook(
         { wch: 10 },
         { wch: 10 },
       ];
-      XLSX.utils.book_append_sheet(workbook, sheet, buildSheetName(month.year, month.month));
+      XLSX.utils.book_append_sheet(
+        workbook,
+        sheet,
+        buildSheetName(month.year, month.month, month.isOutlier === true)
+      );
     });
   }
 
@@ -395,8 +410,17 @@ export function downloadWorkbook(workbook: XLSX.WorkBook, fileName: string): voi
   XLSX.writeFile(workbook, fileName);
 }
 
-export function buildSheetName(year: number, month: number): string {
-  return formatMonthYear(year, month).slice(0, SHEET_NAME_LIMIT);
+export function buildSheetName(year: number, month: number, isOutlier = false): string {
+  const base = formatMonthYear(year, month);
+  const name = isOutlier ? `${base}${OUTLIER_SHEET_SUFFIX}` : base;
+  return name.slice(0, SHEET_NAME_LIMIT);
+}
+
+/** "חודש מוחרג" or "חודש מוחרג: חתונה". Null when this month is not an outlier. */
+function outlierMonthLabel(month: MonthData): string | null {
+  if (month.isOutlier !== true) return null;
+  const note = month.outlierNote?.trim() ?? '';
+  return note.length > 0 ? `${EXCEL_HEADERS.outlierMonth}: ${note}` : EXCEL_HEADERS.outlierMonth;
 }
 
 export function buildExportFileName(): string {
@@ -458,7 +482,7 @@ export async function parseExcelFile(
       defval: '',
     });
 
-    const parsed = parseSheetRows(rows, period.year, period.month);
+    const parsed = parseSheetRows(rows, period.year, period.month, sheetName);
     if (parsed.income.length === 0 && parsed.expenses.length === 0) {
       skippedSheets.push(sheetName);
       return;
@@ -480,6 +504,8 @@ export async function parseExcelFile(
     creditCount: month.expenses.filter((expense) => expense.amount < 0).length,
     totalIncome: sumIncome(month.income),
     totalExpenses: sumExpenses(month.expenses),
+    isOutlier: month.isOutlier === true,
+    ...(month.outlierNote !== undefined ? { outlierNote: month.outlierNote } : {}),
     isReplacing: existingMonths.some(
       (existing) => existing.year === month.year && existing.month === month.month
     ),
@@ -526,10 +552,25 @@ function extractSettingsFromWorkbook(workbook: XLSX.WorkBook): SettingsParseResu
 
 type Section = 'none' | 'income' | 'expenses';
 
-function parseSheetRows(rows: SheetRow[], year: number, month: number): MonthData {
+function parseSheetRows(
+  rows: SheetRow[],
+  year: number,
+  month: number,
+  sheetName = ''
+): MonthData {
   const income: IncomeSource[] = [];
   const expenses: Expense[] = [];
   let section: Section = 'none';
+  let isOutlier = sheetName.includes(OUTLIER_SHEET_SUFFIX);
+  let outlierNote: string | undefined;
+
+  const applyOutlierCell = (value: string): boolean => {
+    const marker = readOutlierMarker(value);
+    if (marker === null) return false;
+    isOutlier = true;
+    if (marker.note !== undefined) outlierNote = marker.note;
+    return true;
+  };
 
   rows.forEach((row) => {
     const first = toSafeString(row[0]);
@@ -541,6 +582,10 @@ function parseSheetRows(rows: SheetRow[], year: number, month: number): MonthDat
     const seventh = toSafeString(row[6]);
     const eighth = toSafeString(row[7]);
 
+    if (applyOutlierCell(first)) {
+      return;
+    }
+
     if (isSectionHeader(first, EXCEL_HEADERS.income) || isSectionHeader(second, EXCEL_HEADERS.income)) {
       section = 'income';
       return;
@@ -550,6 +595,9 @@ function parseSheetRows(rows: SheetRow[], year: number, month: number): MonthDat
       isSectionHeader(second, EXCEL_HEADERS.expenses)
     ) {
       section = 'expenses';
+      row.forEach((cell) => {
+        applyOutlierCell(toSafeString(cell));
+      });
       return;
     }
     if (isColumnHeaderRow(first, second) || isTotalRow(first)) {
@@ -588,7 +636,26 @@ function parseSheetRows(rows: SheetRow[], year: number, month: number): MonthDat
     }
   });
 
-  return { year, month, income, expenses };
+  const parsed: MonthData = { year, month, income, expenses };
+  if (isOutlier) {
+    parsed.isOutlier = true;
+    if (outlierNote !== undefined && outlierNote.length > 0) {
+      parsed.outlierNote = outlierNote;
+    }
+  }
+  return parsed;
+}
+
+/** "חודש מוחרג" or "חודש מוחרג: <note>". The note is the outlier reason. */
+function readOutlierMarker(value: string): { note?: string } | null {
+  const text = value.trim();
+  const label = EXCEL_HEADERS.outlierMonth;
+  if (text === label || text === `${label}:`) return {};
+  if (text.startsWith(`${label}:`)) {
+    const note = text.slice(label.length + 1).trim();
+    return note.length > 0 ? { note } : {};
+  }
+  return null;
 }
 
 function parseBankSource(value: string): BankSource | undefined {

@@ -196,6 +196,8 @@ export const EXCEL_HEADERS = {
   source: 'מקור',
   cardLast4: '4 ספרות',
   total: 'סה"כ',
+  /** Banner written on an outlier month sheet, optionally followed by ": " and outlierNote. */
+  outlierMonth: 'חודש מוחרג',
 } as const;
 
 type SeedMonth = {

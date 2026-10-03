@@ -222,6 +222,9 @@ export interface ImportPreviewRow {
   totalIncome: number;
   totalExpenses: number;
   isReplacing: boolean;
+  /** Set when the sheet was marked חודש מוחרג / "· חריג". */
+  isOutlier?: boolean;
+  outlierNote?: string;
 }
 
 export interface ExcelParseResult {

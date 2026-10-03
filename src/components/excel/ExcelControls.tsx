@@ -332,6 +332,11 @@ export function ExcelControls({
                         <Text fz="sm" fw={600}>
                           {formatMonthYear(row.year, row.month)}
                         </Text>
+                        {row.isOutlier === true && (
+                          <Text fz="xs" c={COLORS.amber}>
+                            {row.outlierNote ? `חריג · ${row.outlierNote}` : 'חריג'}
+                          </Text>
+                        )}
                       </Table.Td>
                       <Table.Td>
                         <Text fz="sm" c={COLORS.income}>
