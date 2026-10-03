@@ -47,8 +47,16 @@ interface SettingsState {
   setColorSchemeMode: (mode: ColorSchemeMode) => void;
   setHourDarkBefore: (hour: number) => void;
   setHourDarkFrom: (hour: number) => void;
-  /** Records a finished Drive sync: remote stamp stored, local dirty marker cleared. */
-  markDriveSynced: (remoteModifiedTime: string | null) => void;
+  /**
+   * Records a finished Drive sync.
+   * Pass `dirtyAtSnapshot` (the value at snapshot time) so an edit made while the
+   * upload was in flight is not marked clean. Pass `keepDirty` when the upload
+   * succeeded but Drive did not return a modifiedTime.
+   */
+  markDriveSynced: (
+    remoteModifiedTime: string | null,
+    options?: { dirtyAtSnapshot?: string | null; keepDirty?: boolean }
+  ) => void;
   /** Flags that local data changed since the last Drive sync (first change wins). */
   markLocalDirty: () => void;
   /** Applies a settings snapshot from a backup; absent fields keep their current value. */
@@ -123,64 +131,78 @@ export const useSettingsStore = create<SettingsState>()(
       setHourDarkBefore: (hour) =>
         set({ hourDarkBefore: normalizeHourValue(hour, HOUR_DARK_BEFORE) }),
       setHourDarkFrom: (hour) => set({ hourDarkFrom: normalizeHourValue(hour, HOUR_DARK_FROM) }),
-      markDriveSynced: (remoteModifiedTime) =>
-        set({
-          lastSyncedRemoteModifiedTime:
+      markDriveSynced: (remoteModifiedTime, options) =>
+        set((state) => {
+          const incoming =
             typeof remoteModifiedTime === 'string' && remoteModifiedTime.length > 0
               ? remoteModifiedTime
-              : null,
-          localDirtyAt: null,
+              : null;
+          const keepPreviousStamp = options?.keepDirty === true && incoming === null;
+          const clearDirty =
+            options?.keepDirty === true
+              ? false
+              : options !== undefined && 'dirtyAtSnapshot' in options
+                ? state.localDirtyAt === options.dirtyAtSnapshot
+                : true;
+          return {
+            lastSyncedRemoteModifiedTime: keepPreviousStamp
+              ? state.lastSyncedRemoteModifiedTime
+              : (incoming ?? state.lastSyncedRemoteModifiedTime),
+            localDirtyAt: clearDirty ? null : state.localDirtyAt,
+          };
         }),
-      markLocalDirty: () =>
-        set((state) =>
-          state.localDirtyAt === null ? { localDirtyAt: new Date().toISOString() } : state
-        ),
+      markLocalDirty: () => set({ localDirtyAt: new Date().toISOString() }),
       restoreSettingsFromBackup: (settings) => {
         if (settings === undefined || settings === null) return;
         set((state) => ({
-          // An absent key means "the export did not carry one" — never wipe the local key.
+          // A field missing from the file keeps the current value — including
+          // booleans and enums, not only the API key.
           openRouterApiKey:
+            'openRouterApiKey' in settings &&
             typeof settings.openRouterApiKey === 'string' &&
             settings.openRouterApiKey.trim().length > 0
               ? settings.openRouterApiKey
               : state.openRouterApiKey,
           googleOAuthClientId:
+            'googleOAuthClientId' in settings &&
             typeof settings.googleOAuthClientId === 'string' &&
             settings.googleOAuthClientId.trim().length > 0
               ? settings.googleOAuthClientId
               : state.googleOAuthClientId,
           autoBackupEnabled:
-            typeof settings.autoBackupEnabled === 'boolean'
+            'autoBackupEnabled' in settings && typeof settings.autoBackupEnabled === 'boolean'
               ? settings.autoBackupEnabled
               : state.autoBackupEnabled,
           autoBackupIntervalDays:
-            settings.autoBackupIntervalDays === undefined
-              ? state.autoBackupIntervalDays
-              : normalizeIntervalDays(settings.autoBackupIntervalDays),
+            'autoBackupIntervalDays' in settings &&
+            typeof settings.autoBackupIntervalDays === 'number'
+              ? normalizeIntervalDays(settings.autoBackupIntervalDays)
+              : state.autoBackupIntervalDays,
           autoBackupFormat:
-            settings.autoBackupFormat === undefined
-              ? state.autoBackupFormat
-              : normalizeFormat(settings.autoBackupFormat),
+            'autoBackupFormat' in settings
+              ? normalizeFormat(settings.autoBackupFormat)
+              : state.autoBackupFormat,
           lastLocalBackupAt:
-            typeof settings.lastLocalBackupAt === 'string'
+            'lastLocalBackupAt' in settings && typeof settings.lastLocalBackupAt === 'string'
               ? settings.lastLocalBackupAt
               : state.lastLocalBackupAt,
           excludeOutliersFromStats:
+            'excludeOutliersFromStats' in settings &&
             typeof settings.excludeOutliersFromStats === 'boolean'
               ? settings.excludeOutliersFromStats
               : state.excludeOutliersFromStats,
           colorSchemeMode:
-            settings.colorSchemeMode === undefined
-              ? state.colorSchemeMode
-              : normalizeColorSchemeMode(settings.colorSchemeMode),
+            'colorSchemeMode' in settings
+              ? normalizeColorSchemeMode(settings.colorSchemeMode)
+              : state.colorSchemeMode,
           hourDarkBefore:
-            settings.hourDarkBefore === undefined
-              ? state.hourDarkBefore
-              : normalizeHourValue(settings.hourDarkBefore, HOUR_DARK_BEFORE),
+            'hourDarkBefore' in settings && typeof settings.hourDarkBefore === 'number'
+              ? normalizeHourValue(settings.hourDarkBefore, HOUR_DARK_BEFORE)
+              : state.hourDarkBefore,
           hourDarkFrom:
-            settings.hourDarkFrom === undefined
-              ? state.hourDarkFrom
-              : normalizeHourValue(settings.hourDarkFrom, HOUR_DARK_FROM),
+            'hourDarkFrom' in settings && typeof settings.hourDarkFrom === 'number'
+              ? normalizeHourValue(settings.hourDarkFrom, HOUR_DARK_FROM)
+              : state.hourDarkFrom,
         }));
       },
       clearSettings: () =>

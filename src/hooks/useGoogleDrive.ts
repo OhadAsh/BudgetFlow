@@ -4,13 +4,16 @@ import { readBackupSnapshot } from '../lib/backupSnapshot';
 import { applyFullBackupRestore } from '../lib/clearUserData';
 import {
   DriveAuthError,
+  DriveConflictError,
+  allowRemoteLoadNotification,
   buildDriveBackupPayload,
   downloadBackupFromDrive,
   findBackupFile,
-  isRemoteNewer,
   isValidGoogleOAuthClientId,
+  remoteNeedsConflictPrompt,
   uploadBackupToDrive,
   type DriveBackupDownload,
+  type DriveUploadBaseline,
 } from '../lib/googleDrive';
 import { useGoogleDriveStore } from '../store/useGoogleDriveStore';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -30,10 +33,15 @@ export type DriveBackupOutcome =
 export interface DriveRemoteState {
   hasRemote: boolean;
   remoteModifiedTime: string | null;
-  /** Drive was written after the stamp from our last sync. */
+  /** Drive was written after the stamp from our last sync, or this device has never synced. */
   remoteIsNewer: boolean;
   /** Local data changed since that sync. */
   hasLocalChanges: boolean;
+  /**
+   * True only when a previous sync stamp exists and nothing local has changed.
+   * This is the only case allowed to show the non-blocking "load newer" offer.
+   */
+  allowLoadNotification: boolean;
 }
 
 export interface UseGoogleDriveResult {
@@ -292,10 +300,16 @@ export function useGoogleDrive(): UseGoogleDriveResult {
     return {
       hasRemote: file !== null,
       remoteModifiedTime: file?.modifiedTime ?? null,
-      remoteIsNewer:
-        file !== null &&
-        isRemoteNewer(file.modifiedTime, settings.lastSyncedRemoteModifiedTime),
+      remoteIsNewer: remoteNeedsConflictPrompt(
+        file !== null,
+        file?.modifiedTime ?? null,
+        settings.lastSyncedRemoteModifiedTime
+      ),
       hasLocalChanges: settings.localDirtyAt !== null,
+      allowLoadNotification: allowRemoteLoadNotification(
+        settings.lastSyncedRemoteModifiedTime,
+        settings.localDirtyAt
+      ),
     };
   }, [withFreshToken]);
 
@@ -309,19 +323,38 @@ export function useGoogleDrive(): UseGoogleDriveResult {
 
       setIsBusy(true);
       try {
+        let baseline: DriveUploadBaseline | undefined;
         if (options?.force !== true) {
           // Metadata only — cheap enough to run before every single upload.
           const remote = await checkRemoteState();
           if (remote.hasRemote && remote.remoteIsNewer) {
             return { status: 'conflict', remoteModifiedTime: remote.remoteModifiedTime };
           }
+          baseline = { exists: remote.hasRemote, modifiedTime: remote.remoteModifiedTime };
         }
 
+        const dirtyAtSnapshot = useSettingsStore.getState().localDirtyAt;
         const snapshot = readBackupSnapshot({ includeApiKey: true });
         const payload = buildDriveBackupPayload(snapshot);
-        const file = await withFreshToken((token) => uploadBackupToDrive(token, payload));
-        const remoteModifiedTime = file.modifiedTime ?? null;
-        useSettingsStore.getState().markDriveSynced(remoteModifiedTime);
+        const uploaded = await withFreshToken((token) =>
+          uploadBackupToDrive(token, payload, baseline)
+        ).catch((error: unknown) => {
+          if (error instanceof DriveConflictError) return error;
+          throw error;
+        });
+        if (uploaded instanceof DriveConflictError) {
+          return { status: 'conflict', remoteModifiedTime: uploaded.remoteModifiedTime };
+        }
+        const file = uploaded;
+        const remoteModifiedTime =
+          typeof file.modifiedTime === 'string' && file.modifiedTime.length > 0
+            ? file.modifiedTime
+            : null;
+        if (remoteModifiedTime === null) {
+          useSettingsStore.getState().markDriveSynced(null, { keepDirty: true });
+        } else {
+          useSettingsStore.getState().markDriveSynced(remoteModifiedTime, { dirtyAtSnapshot });
+        }
         return { status: 'uploaded', remoteModifiedTime };
       } finally {
         setIsBusy(false);

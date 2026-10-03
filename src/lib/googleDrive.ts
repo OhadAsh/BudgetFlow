@@ -3,7 +3,6 @@ import {
   DRIVE_BACKUP_VERSION,
 } from './constants';
 import type {
-  AutoBackupFormat,
   BackupSettings,
   CategoryKind,
   CategoryTargets,
@@ -14,7 +13,7 @@ import type {
   MerchantMemory,
   MonthData,
 } from '../types';
-import { normalizeColorSchemeMode, normalizeHourValue, HOUR_DARK_BEFORE, HOUR_DARK_FROM } from './colorScheme';
+import { normalizeHourValue, HOUR_DARK_BEFORE, HOUR_DARK_FROM } from './colorScheme';
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
@@ -55,6 +54,17 @@ export class DriveParseError extends Error {
   constructor(message = 'קובץ הגיבוי ב-Drive אינו תקין או בפורמט לא נתמך.') {
     super(message);
     this.name = 'DriveParseError';
+  }
+}
+
+/** The Drive file changed between the pre-check and the upload. Callers open the conflict modal. */
+export class DriveConflictError extends Error {
+  readonly remoteModifiedTime: string | null;
+
+  constructor(remoteModifiedTime: string | null) {
+    super('הגיבוי ב-Drive השתנה מאז הבדיקה האחרונה.');
+    this.name = 'DriveConflictError';
+    this.remoteModifiedTime = remoteModifiedTime;
   }
 }
 
@@ -280,25 +290,49 @@ function parseExpense(value: unknown): Expense | null {
   return expense;
 }
 
-function parseMonth(value: unknown): MonthData | null {
-  if (!isRecord(value)) return null;
-  if (typeof value.year !== 'number' || typeof value.month !== 'number') return null;
-  if (!Array.isArray(value.income) || !Array.isArray(value.expenses)) return null;
+interface ParsedMonth {
+  month: MonthData | null;
+  /** Invalid month, or income/expense rows inside a valid month, that were dropped. */
+  skipped: number;
+}
 
-  const income = value.income.map(parseIncome).filter((row): row is IncomeSource => row !== null);
-  const expenses = value.expenses
-    .map(parseExpense)
-    .filter((row): row is Expense => row !== null);
+function parseMonth(value: unknown): ParsedMonth {
+  if (
+    !isRecord(value) ||
+    typeof value.year !== 'number' ||
+    typeof value.month !== 'number' ||
+    !Array.isArray(value.income) ||
+    !Array.isArray(value.expenses)
+  ) {
+    return { month: null, skipped: 1 };
+  }
+
+  let skipped = 0;
+  const income: IncomeSource[] = [];
+  value.income.forEach((row) => {
+    const parsed = parseIncome(row);
+    if (parsed === null) skipped += 1;
+    else income.push(parsed);
+  });
+  const expenses: Expense[] = [];
+  value.expenses.forEach((row) => {
+    const parsed = parseExpense(row);
+    if (parsed === null) skipped += 1;
+    else expenses.push(parsed);
+  });
 
   return {
-    year: value.year,
-    month: value.month,
-    income,
-    expenses,
-    ...(value.isOutlier === true ? { isOutlier: true as const } : {}),
-    ...(typeof value.outlierNote === 'string' && value.outlierNote.trim().length > 0
-      ? { outlierNote: value.outlierNote.trim() }
-      : {}),
+    month: {
+      year: value.year,
+      month: value.month,
+      income,
+      expenses,
+      ...(value.isOutlier === true ? { isOutlier: true as const } : {}),
+      ...(typeof value.outlierNote === 'string' && value.outlierNote.trim().length > 0
+        ? { outlierNote: value.outlierNote.trim() }
+        : {}),
+    },
+    skipped,
   };
 }
 
@@ -342,10 +376,6 @@ function parseCategoryTargets(value: unknown): CategoryTargets {
   return result;
 }
 
-function parseAutoBackupFormat(value: unknown, fallback: AutoBackupFormat): AutoBackupFormat {
-  return value === 'json' || value === 'xlsx' || value === 'both' ? value : fallback;
-}
-
 function parseIntervalDays(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.min(365, Math.max(1, Math.round(value)));
@@ -355,25 +385,60 @@ function parseOptionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
+const COLOR_SCHEME_MODES = ['light', 'dark', 'system', 'hour'] as const;
+
 /**
- * Settings block of a version 4 backup. Version 1–3 files have no block, so
- * every field falls back to the app default and only the top-level API key survives.
+ * Copies only fields the file actually contains. Missing fields stay off the
+ * object so restore keeps the current value instead of a parser default.
+ * A version 1–3 file has no settings block; its top-level API key, when
+ * present, is the one field that still comes across.
  */
-function parseBackupSettings(value: unknown, openRouterApiKey: string | null): BackupSettings {
+function parseBackupSettings(value: unknown, topLevelApiKey: string | null): Partial<BackupSettings> {
   const raw = isRecord(value) ? value : {};
-  return {
-    openRouterApiKey: parseOptionalString(raw.openRouterApiKey) ?? openRouterApiKey,
-    googleOAuthClientId: parseOptionalString(raw.googleOAuthClientId),
-    autoBackupEnabled: typeof raw.autoBackupEnabled === 'boolean' ? raw.autoBackupEnabled : true,
-    autoBackupIntervalDays: parseIntervalDays(raw.autoBackupIntervalDays, 7),
-    autoBackupFormat: parseAutoBackupFormat(raw.autoBackupFormat, 'json'),
-    lastLocalBackupAt: parseOptionalString(raw.lastLocalBackupAt),
-    excludeOutliersFromStats:
-      typeof raw.excludeOutliersFromStats === 'boolean' ? raw.excludeOutliersFromStats : true,
-    colorSchemeMode: normalizeColorSchemeMode(raw.colorSchemeMode),
-    hourDarkBefore: normalizeHourValue(raw.hourDarkBefore, HOUR_DARK_BEFORE),
-    hourDarkFrom: normalizeHourValue(raw.hourDarkFrom, HOUR_DARK_FROM),
-  };
+  const settings: Partial<BackupSettings> = {};
+
+  const settingsKey = parseOptionalString(raw.openRouterApiKey);
+  if (settingsKey !== null) {
+    settings.openRouterApiKey = settingsKey;
+  } else if (!('openRouterApiKey' in raw) && topLevelApiKey !== null) {
+    settings.openRouterApiKey = topLevelApiKey;
+  }
+
+  const clientId = parseOptionalString(raw.googleOAuthClientId);
+  if ('googleOAuthClientId' in raw && clientId !== null) {
+    settings.googleOAuthClientId = clientId;
+  }
+
+  if (typeof raw.autoBackupEnabled === 'boolean') {
+    settings.autoBackupEnabled = raw.autoBackupEnabled;
+  }
+  if (typeof raw.autoBackupIntervalDays === 'number' && Number.isFinite(raw.autoBackupIntervalDays)) {
+    settings.autoBackupIntervalDays = parseIntervalDays(raw.autoBackupIntervalDays, 7);
+  }
+  if (raw.autoBackupFormat === 'json' || raw.autoBackupFormat === 'xlsx' || raw.autoBackupFormat === 'both') {
+    settings.autoBackupFormat = raw.autoBackupFormat;
+  }
+  const lastLocalBackupAt = parseOptionalString(raw.lastLocalBackupAt);
+  if ('lastLocalBackupAt' in raw && lastLocalBackupAt !== null) {
+    settings.lastLocalBackupAt = lastLocalBackupAt;
+  }
+  if (typeof raw.excludeOutliersFromStats === 'boolean') {
+    settings.excludeOutliersFromStats = raw.excludeOutliersFromStats;
+  }
+  if (
+    typeof raw.colorSchemeMode === 'string' &&
+    (COLOR_SCHEME_MODES as readonly string[]).includes(raw.colorSchemeMode)
+  ) {
+    settings.colorSchemeMode = raw.colorSchemeMode as BackupSettings['colorSchemeMode'];
+  }
+  if (typeof raw.hourDarkBefore === 'number' && Number.isFinite(raw.hourDarkBefore)) {
+    settings.hourDarkBefore = normalizeHourValue(raw.hourDarkBefore, HOUR_DARK_BEFORE);
+  }
+  if (typeof raw.hourDarkFrom === 'number' && Number.isFinite(raw.hourDarkFrom)) {
+    settings.hourDarkFrom = normalizeHourValue(raw.hourDarkFrom, HOUR_DARK_FROM);
+  }
+
+  return settings;
 }
 
 function parseExcludedTransactions(value: unknown): string[] {
@@ -397,7 +462,13 @@ export function parseDriveBackupPayload(raw: unknown): DriveBackupPayload {
     throw new DriveParseError('קובץ הגיבוי אינו מכיל רשימת חודשים.');
   }
 
-  const months = raw.months.map(parseMonth).filter((row): row is MonthData => row !== null);
+  let skippedRows = 0;
+  const months: MonthData[] = [];
+  raw.months.forEach((entry) => {
+    const parsed = parseMonth(entry);
+    skippedRows += parsed.skipped;
+    if (parsed.month !== null) months.push(parsed.month);
+  });
   const selectedYear =
     typeof raw.selectedYear === 'number' && Number.isFinite(raw.selectedYear)
       ? raw.selectedYear
@@ -407,11 +478,14 @@ export function parseDriveBackupPayload(raw: unknown): DriveBackupPayload {
       ? raw.selectedMonth
       : new Date().getMonth() + 1;
 
-  const customCategories = Array.isArray(raw.customCategories)
-    ? raw.customCategories
-        .map(parseCustomCategory)
-        .filter((row): row is CustomCategory => row !== null)
-    : [];
+  const customCategories: CustomCategory[] = [];
+  if (Array.isArray(raw.customCategories)) {
+    raw.customCategories.forEach((entry) => {
+      const parsed = parseCustomCategory(entry);
+      if (parsed === null) skippedRows += 1;
+      else customCategories.push(parsed);
+    });
+  }
 
   const openRouterApiKey =
     typeof raw.openRouterApiKey === 'string' && raw.openRouterApiKey.trim().length > 0
@@ -430,6 +504,7 @@ export function parseDriveBackupPayload(raw: unknown): DriveBackupPayload {
     excludedTransactions: parseExcludedTransactions(raw.excludedTransactions),
     openRouterApiKey,
     settings: parseBackupSettings(raw.settings, openRouterApiKey),
+    skippedRows,
   };
 }
 
@@ -452,12 +527,50 @@ export function formatDriveBackupExportedAt(exportedAt: string): string {
  * Uploads (or updates) the fixed-name backup JSON on Google Drive.
  * Uses multipart/related so metadata + content travel in one request.
  */
+/** What the caller saw on the metadata check that decided this upload was safe. */
+export interface DriveUploadBaseline {
+  exists: boolean;
+  modifiedTime: string | null;
+}
+
+function remoteChangedSinceBaseline(
+  baseline: DriveUploadBaseline,
+  current: DriveBackupFileMeta | null
+): boolean {
+  const existsNow = current !== null;
+  if (baseline.exists !== existsNow) return true;
+  if (!existsNow || current === null) return false;
+  return (current.modifiedTime ?? null) !== baseline.modifiedTime;
+}
+
+/** Metadata-only read of one file. Failures return null so a finished upload is not retried. */
+async function readModifiedTime(token: string, fileId: string): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=modifiedTime`,
+      { method: 'GET', headers: authHeaders(token) }
+    );
+    if (!response.ok) return null;
+    const data = (await response.json()) as { modifiedTime?: unknown };
+    return typeof data.modifiedTime === 'string' && data.modifiedTime.length > 0
+      ? data.modifiedTime
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function uploadBackupToDrive(
   token: string,
-  data: DriveBackupPayload
+  data: DriveBackupPayload,
+  baseline?: DriveUploadBaseline
 ): Promise<DriveFileResource> {
   const jsonBody = JSON.stringify(data);
-  const existingId = await findBackupFileId(token);
+  const current = await findBackupFile(token);
+  if (baseline !== undefined && remoteChangedSinceBaseline(baseline, current)) {
+    throw new DriveConflictError(current?.modifiedTime ?? null);
+  }
+  const existingId = current?.id ?? null;
   const metadata: Record<string, string> = existingId
     ? { mimeType: 'application/json' }
     : { name: DRIVE_BACKUP_FILE_NAME, mimeType: 'application/json' };
@@ -482,7 +595,12 @@ export async function uploadBackupToDrive(
   }
 
   const file = (await response.json()) as DriveFileResource;
-  return file;
+  let modifiedTime =
+    typeof file.modifiedTime === 'string' && file.modifiedTime.length > 0 ? file.modifiedTime : null;
+  if (modifiedTime === null && typeof file.id === 'string' && file.id.length > 0) {
+    modifiedTime = await readModifiedTime(token, file.id);
+  }
+  return modifiedTime === null ? file : { ...file, modifiedTime };
 }
 
 /** Locates the backup file and returns its decoded JSON payload plus its Drive stamp. */
@@ -515,19 +633,54 @@ export async function downloadBackupFromDrive(token: string): Promise<DriveBacku
 }
 
 /**
- * True when the Drive copy changed after the stamp recorded at the last sync.
- * A missing local stamp counts as "newer" — the app has never seen that file.
+ * True when Drive's modifiedTime is later than the stamp from the last sync.
+ * A missing remote timestamp is not "newer". A missing local stamp is handled
+ * by `remoteNeedsConflictPrompt`, because that case means "a file exists and
+ * this device has never synced", which must always be a conflict.
  */
 export function isRemoteNewer(
   remoteModifiedTime: string | null,
   lastSyncedRemoteModifiedTime: string | null
 ): boolean {
   if (remoteModifiedTime === null) return false;
-  if (lastSyncedRemoteModifiedTime === null) return true;
+  if (lastSyncedRemoteModifiedTime === null || lastSyncedRemoteModifiedTime.length === 0) {
+    return true;
+  }
   const remoteMs = Date.parse(remoteModifiedTime);
   const syncedMs = Date.parse(lastSyncedRemoteModifiedTime);
   if (!Number.isFinite(remoteMs) || !Number.isFinite(syncedMs)) return true;
   return remoteMs > syncedMs;
+}
+
+/**
+ * True when an upload must stop and ask the user. A remote file with no local
+ * sync stamp is always a conflict, even when Drive did not return a modifiedTime.
+ */
+export function remoteNeedsConflictPrompt(
+  hasRemoteFile: boolean,
+  remoteModifiedTime: string | null,
+  lastSyncedRemoteModifiedTime: string | null
+): boolean {
+  if (!hasRemoteFile) return false;
+  if (lastSyncedRemoteModifiedTime === null || lastSyncedRemoteModifiedTime.length === 0) {
+    return true;
+  }
+  return isRemoteNewer(remoteModifiedTime, lastSyncedRemoteModifiedTime);
+}
+
+/**
+ * The quiet "load the newer file" offer is only safe after a real sync, and
+ * only when nothing local has changed since then.
+ */
+export function allowRemoteLoadNotification(
+  lastSyncedRemoteModifiedTime: string | null,
+  localDirtyAt: string | null
+): boolean {
+  return (
+    lastSyncedRemoteModifiedTime !== null &&
+    lastSyncedRemoteModifiedTime.length > 0 &&
+    localDirtyAt === null
+  );
 }
 
 /**

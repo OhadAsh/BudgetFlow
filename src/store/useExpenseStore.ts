@@ -201,12 +201,13 @@ function normalizeCustomCategories(value: unknown): CustomCategory[] {
     }));
 }
 
-/** Every exclusion key currently reachable from the stored months. */
+/** Every exclusion key currently reachable from the stored months. Rows with no hash contribute nothing. */
 function collectExclusionKeys(months: MonthData[]): Set<string> {
   const keys = new Set<string>();
   months.forEach((month) => {
     month.expenses.forEach((expense) => {
-      keys.add(buildExpenseExclusionKey(expense));
+      const key = buildExpenseExclusionKey(expense);
+      if (key !== null) keys.add(key);
     });
   });
   return keys;
@@ -301,7 +302,7 @@ export const useExpenseStore = create<ExpenseState>()(
           const expense = target?.expenses.find((entry) => entry.id === id);
           if (target === undefined || expense === undefined) return state;
 
-          const key = buildExpenseExclusionKey(expense);
+          const key = buildExpenseExclusionKey(expense, { pin: true });
           const current = new Set(state.excludedTransactions);
           if (excluded) {
             current.add(key);
@@ -495,9 +496,11 @@ export const useExpenseStore = create<ExpenseState>()(
       deleteYear: (year) =>
         set((state) => {
           const months = state.months.filter((entry) => entry.year !== year);
+          const stillUsed = collectExclusionKeys(months);
           return {
             months,
             selectedYear: resolveSelectedYear(months, state.selectedYear),
+            excludedTransactions: state.excludedTransactions.filter((key) => stillUsed.has(key)),
           };
         }),
 
@@ -577,10 +580,13 @@ export const useExpenseStore = create<ExpenseState>()(
             return state;
           }
           snapshot = cloneMonthData(existing);
+          const months = state.months.filter(
+            (entry) => !(entry.year === year && entry.month === safeMonth)
+          );
+          const stillUsed = collectExclusionKeys(months);
           return {
-            months: state.months.filter(
-              (entry) => !(entry.year === year && entry.month === safeMonth)
-            ),
+            months,
+            excludedTransactions: state.excludedTransactions.filter((key) => stillUsed.has(key)),
           };
         });
         return snapshot;

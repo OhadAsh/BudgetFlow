@@ -30,7 +30,10 @@ export function withoutExcludedTransactions(
   excluded: ReadonlySet<string> = NO_EXCLUDED_TRANSACTIONS
 ): Expense[] {
   if (excluded.size === 0) return expenses;
-  return expenses.filter((expense) => !excluded.has(buildExpenseExclusionKey(expense)));
+  return expenses.filter((expense) => {
+    const key = buildExpenseExclusionKey(expense);
+    return key === null || !excluded.has(key);
+  });
 }
 
 /** True when this row was individually excluded from every statistic. */
@@ -38,7 +41,8 @@ export function isExpenseExcluded(
   expense: Expense,
   excluded: ReadonlySet<string> = NO_EXCLUDED_TRANSACTIONS
 ): boolean {
-  return excluded.size > 0 && excluded.has(buildExpenseExclusionKey(expense));
+  const key = buildExpenseExclusionKey(expense);
+  return key !== null && excluded.size > 0 && excluded.has(key);
 }
 
 /** Options for year-level aggregations and chart series. */

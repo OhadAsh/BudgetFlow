@@ -120,7 +120,9 @@ export function GoogleDriveBackup({
         return;
       }
 
-      if (remote.hasLocalChanges) {
+      // No sync stamp, or local edits since the last sync: always the three-choice modal.
+      // The notification is only for a known sync with a clean local copy.
+      if (!remote.allowLoadNotification) {
         openConflict(remote.remoteModifiedTime);
         return;
       }
@@ -301,7 +303,17 @@ export function GoogleDriveBackup({
   const handleConflictDownloadCopy = async (): Promise<void> => {
     try {
       const download = await fetchBackup();
-      downloadJsonBackup(download.payload, buildLocalJsonBackupFileName());
+      const settings = download.payload.settings;
+      downloadJsonBackup(
+        {
+          ...download.payload,
+          openRouterApiKey: null,
+          ...(settings !== undefined
+            ? { settings: { ...settings, openRouterApiKey: null } }
+            : {}),
+        },
+        buildLocalJsonBackupFileName()
+      );
       closeConflict();
       notifications.show({
         color: 'emerald',
@@ -464,6 +476,11 @@ export function GoogleDriveBackup({
             זיכרון עסקים, יעדים ומפתח ה-AI (OpenRouter). Google Client ID לא יוחלף. הנתונים הנוכחיים
             במכשיר יימחקו לחלוטין (לא ימוזגו). הפעולה אינה ניתנת לביטול.
           </Text>
+          {(pendingRestore?.payload.skippedRows ?? 0) > 0 && (
+            <Text fz="sm" c="orange">
+              {`${pendingRestore?.payload.skippedRows ?? 0} שורות לא נקראו`}
+            </Text>
+          )}
           <Group justify="flex-end" gap="xs">
             <Button variant="default" radius="xl" onClick={closeRestoreConfirm}>
               ביטול

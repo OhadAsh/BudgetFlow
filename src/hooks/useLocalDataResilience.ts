@@ -22,6 +22,15 @@ const QUOTA_RECHECK_MS = 60_000;
 /** Survives React StrictMode remounts within the same page load. */
 let autoBackupAttemptedThisPageLoad = false;
 let backupNudgeShownThisPageLoad = false;
+/** Cleared when the Drive conflict modal opens, so a scheduled download cannot slip through. */
+let pendingAutoBackupTimeout: number | null = null;
+
+function clearPendingAutoBackup(): void {
+  if (pendingAutoBackupTimeout !== null) {
+    window.clearTimeout(pendingAutoBackupTimeout);
+    pendingAutoBackupTimeout = null;
+  }
+}
 
 function hasAnythingToBackup(snapshot: LocalBackupSnapshotInput): boolean {
   return (
@@ -140,8 +149,10 @@ export function useLocalDataResilience(): UseLocalDataResilienceResult {
       return;
     }
 
-    // Never fire a backup behind the Drive conflict dialog.
+    // Never fire a backup behind the Drive conflict dialog, and cancel one
+    // that was already queued when the dialog opens.
     if (conflictOpen) {
+      clearPendingAutoBackup();
       return;
     }
 
@@ -169,8 +180,14 @@ export function useLocalDataResilience(): UseLocalDataResilienceResult {
     autoBackupAttemptedThisPageLoad = true;
 
     // Best-effort programmatic download (browsers may block without a user gesture).
-    // No cleanup cancel — StrictMode remount must not abort the one-shot attempt.
-    window.setTimeout(() => {
+    // No effect cleanup — StrictMode remount must not abort the one-shot attempt.
+    // The conflict modal clears this timeout itself, and the callback checks again.
+    clearPendingAutoBackup();
+    pendingAutoBackupTimeout = window.setTimeout(() => {
+      pendingAutoBackupTimeout = null;
+      if (useGoogleDriveStore.getState().conflictOpen) {
+        return;
+      }
       const ok = backupNow({ silent: true });
       if (ok) {
         notifications.hide(BACKUP_DUE_NOTIFY_ID);

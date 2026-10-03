@@ -36,8 +36,6 @@ type SettingsSnapshot = ReturnType<typeof useSettingsStore.getState>;
 /** Expense-store fields that belong in a backup — a change here needs a new sync. */
 const TRACKED_EXPENSE_KEYS: Array<keyof ExpenseSnapshot> = [
   'months',
-  'selectedYear',
-  'selectedMonth',
   'customCategories',
   'merchantMemory',
   'categoryTargets',

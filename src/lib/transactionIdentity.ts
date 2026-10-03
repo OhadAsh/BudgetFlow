@@ -75,16 +75,27 @@ function buildDisambiguatedCoreHash(input: TransactionFingerprintInput): string 
 const LOCAL_FINGERPRINT_PREFIX = 'local:';
 
 /**
- * Stable key used to remember that a transaction is excluded from the statistics.
- * Imported rows already carry a fingerprint; manual rows get a deterministic one
- * derived from their own fields so the key survives an export/import round trip.
+ * Key for an excluded transaction.
+ * An existing hash wins — imported fingerprints and already-pinned `local:` ids,
+ * including legacy `local:<base64>` content keys, so those keep matching on import.
+ * Pass `{ pin: true }` only when excluding a manual row that has no hash yet:
+ * that mints `local:` + a new UUID, which the caller stores on the row.
+ * Reads must not mint an id, or two identical rows would collide and every
+ * render would invent a different key.
  */
-export function buildExpenseExclusionKey(expense: Expense): string {
+export function buildExpenseExclusionKey(expense: Expense, options: { pin: true }): string;
+export function buildExpenseExclusionKey(expense: Expense, options?: { pin?: false }): string | null;
+export function buildExpenseExclusionKey(
+  expense: Expense,
+  options?: { pin?: boolean }
+): string | null {
   if (typeof expense.hash === 'string' && expense.hash.length > 0) {
     return expense.hash;
   }
-  const raw = `${expense.date ?? ''}|${expense.description.trim()}|${expense.amount}|${expense.category}`;
-  return `${LOCAL_FINGERPRINT_PREFIX}${encodeFingerprint(raw)}`;
+  if (options?.pin === true) {
+    return `${LOCAL_FINGERPRINT_PREFIX}${crypto.randomUUID()}`;
+  }
+  return null;
 }
 
 /** Every key that should count as "already imported" for a stored expense. */

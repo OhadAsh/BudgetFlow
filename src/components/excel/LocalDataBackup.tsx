@@ -258,6 +258,11 @@ export function LocalDataBackupSettings(): JSX.Element {
               ? `הקובץ נוצר ב-${formatDriveBackupExportedAt(pendingRestore.exportedAt)} ומכיל ${pendingRestore.months.length} חודשים. התקופה שתיבחר: ${formatMonthYear(pendingRestore.selectedYear, pendingRestore.selectedMonth)}.`
               : ''}
           </Text>
+          {(pendingRestore?.skippedRows ?? 0) > 0 && (
+            <Text fz="sm" c="orange">
+              {`${pendingRestore?.skippedRows ?? 0} שורות לא נקראו`}
+            </Text>
+          )}
           <Text fz="sm">
             כל הנתונים המקומיים יוחלפו (לא ימוזגו) — חודשים, קטגוריות, זיכרון עסקים, יעדים,
             עסקאות שהוחרגו והגדרות. אם הקובץ אינו מכיל מפתח API, המפתח הנוכחי יישאר כפי שהוא.

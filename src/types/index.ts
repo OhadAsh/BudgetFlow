@@ -200,8 +200,16 @@ export interface DriveBackupPayload {
    * Absent in version 1–3 backups.
    */
   excludedTransactions?: string[];
-  /** Full settings snapshot — absent in version 1–3 backups. */
-  settings?: BackupSettings;
+  /**
+   * Settings snapshot. Fields the file did not contain stay undefined so import
+   * keeps the current value. Absent entirely in version 1–3 backups.
+   */
+  settings?: Partial<BackupSettings>;
+  /**
+   * Months and rows dropped while parsing. Set only on a parsed file, never
+   * written back out by a new export.
+   */
+  skippedRows?: number;
 }
 
 export interface ImportPreviewRow {
