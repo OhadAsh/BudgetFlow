@@ -5,14 +5,19 @@ import { applyFullBackupRestore } from '../lib/clearUserData';
 import {
   DriveAuthError,
   DriveConflictError,
+  DriveInsufficientScopeError,
   allowRemoteLoadNotification,
   buildDriveBackupPayload,
   downloadBackupFromDrive,
   findBackupFile,
+  findLegacyMyDriveBackupFile,
   isValidGoogleOAuthClientId,
+  migrateLegacyBackupToAppDataFolder,
   remoteNeedsConflictPrompt,
+  tokenHasRequiredDriveScopes,
   uploadBackupToDrive,
   type DriveBackupDownload,
+  type DriveBackupFileMeta,
   type DriveUploadBaseline,
 } from '../lib/googleDrive';
 import { useGoogleDriveStore } from '../store/useGoogleDriveStore';
@@ -59,8 +64,14 @@ export interface UseGoogleDriveResult {
   signIn: () => Promise<void>;
   /** Revokes the access token and clears in-memory auth state. */
   signOut: () => Promise<void>;
-  /** Re-requests an access token (used after 401). Pass selectAccount to show the account picker. */
-  requestAccessToken: (options?: { selectAccount?: boolean }) => Promise<string>;
+  /**
+   * Re-requests an access token (used after 401 / missing scope).
+   * Pass selectAccount for the account picker, consent to force the permission screen.
+   */
+  requestAccessToken: (options?: {
+    selectAccount?: boolean;
+    consent?: boolean;
+  }) => Promise<string>;
 
   /**
    * Builds a snapshot from the store and uploads it — unless Drive holds a
@@ -73,6 +84,13 @@ export interface UseGoogleDriveResult {
   applyRestore: (download: DriveBackupDownload) => void;
   /** Metadata-only comparison of the local copy against Drive. */
   checkRemoteState: () => Promise<DriveRemoteState>;
+  /**
+   * When appDataFolder has no backup but a legacy My Drive file exists,
+   * returns that legacy file's metadata so the UI can offer migration.
+   */
+  findLegacyMigrationCandidate: () => Promise<DriveBackupFileMeta | null>;
+  /** Copies the legacy My Drive backup into appDataFolder (never overwrites a newer remote). */
+  migrateLegacyBackup: (deleteLegacy: boolean) => Promise<DriveBackupFileMeta>;
   /** Uploads/downloads busy flag for UI spinners. */
   isBusy: boolean;
 }
@@ -80,6 +98,7 @@ export interface UseGoogleDriveResult {
 /** Module-level GIS client — shared across remounts of Settings / GoogleDriveBackup. */
 let tokenClient: GoogleTokenClient | null = null;
 let lastClientId: string | null = null;
+let lastScope: string | null = null;
 let pendingToken: {
   resolve: (token: string) => void;
   reject: (error: Error) => void;
@@ -108,7 +127,11 @@ function waitForGis(): Promise<GoogleGisNamespace> {
 }
 
 function ensureTokenClient(clientId: string): GoogleTokenClient {
-  if (tokenClient !== null && lastClientId === clientId) {
+  if (
+    tokenClient !== null &&
+    lastClientId === clientId &&
+    lastScope === GOOGLE_DRIVE_SCOPE
+  ) {
     return tokenClient;
   }
 
@@ -130,6 +153,11 @@ function ensureTokenClient(clientId: string): GoogleTokenClient {
         return;
       }
 
+      if (!tokenHasRequiredDriveScopes(response)) {
+        pending?.reject(new DriveInsufficientScopeError());
+        return;
+      }
+
       const ttlMs =
         typeof response.expires_in === 'number' && response.expires_in > 0
           ? response.expires_in * 1000
@@ -147,6 +175,7 @@ function ensureTokenClient(clientId: string): GoogleTokenClient {
 
   tokenClient = client;
   lastClientId = clientId;
+  lastScope = GOOGLE_DRIVE_SCOPE;
   return client;
 }
 
@@ -206,11 +235,12 @@ export function useGoogleDrive(): UseGoogleDriveResult {
       clearSession();
       tokenClient = null;
       lastClientId = null;
+      lastScope = null;
     }
   }, [googleOAuthClientId, clearSession]);
 
   const requestAccessToken = useCallback(
-    (options?: { selectAccount?: boolean }): Promise<string> => {
+    (options?: { selectAccount?: boolean; consent?: boolean }): Promise<string> => {
       const clientId = useSettingsStore.getState().googleOAuthClientId;
       if (clientId === null || !isValidGoogleOAuthClientId(clientId)) {
         return Promise.reject(new Error('MISSING_CLIENT_ID'));
@@ -240,11 +270,15 @@ export function useGoogleDrive(): UseGoogleDriveResult {
         };
         setIsConnecting(true);
         try {
-          // select_account lets the user pick which Google account to use.
-          // Empty prompt is for silent re-auth after 401 when a grant already exists.
-          client.requestAccessToken({
-            prompt: options?.selectAccount ? 'select_account' : '',
-          });
+          // consent: force the permission screen when a new Drive scope was added.
+          // select_account: account picker on first connect.
+          // Empty prompt: silent re-auth after 401 when a grant already exists.
+          const prompt = options?.consent
+            ? 'consent'
+            : options?.selectAccount
+              ? 'select_account'
+              : '';
+          client.requestAccessToken({ prompt });
         } catch (error) {
           pendingToken = null;
           setIsConnecting(false);
@@ -287,6 +321,10 @@ export function useGoogleDrive(): UseGoogleDriveResult {
         if (error instanceof DriveAuthError) {
           const refreshed = await requestAccessToken();
           return operation(refreshed);
+        }
+        if (error instanceof DriveInsufficientScopeError) {
+          const consented = await requestAccessToken({ consent: true });
+          return operation(consented);
         }
         throw error;
       }
@@ -378,6 +416,33 @@ export function useGoogleDrive(): UseGoogleDriveResult {
     useSettingsStore.getState().markDriveSynced(download.modifiedTime);
   }, []);
 
+  const findLegacyMigrationCandidate = useCallback(async (): Promise<DriveBackupFileMeta | null> => {
+    return withFreshToken(async (token) => {
+      const appData = await findBackupFile(token);
+      if (appData !== null) {
+        return null;
+      }
+      return findLegacyMyDriveBackupFile(token);
+    });
+  }, [withFreshToken]);
+
+  const migrateLegacyBackup = useCallback(
+    async (deleteLegacy: boolean): Promise<DriveBackupFileMeta> => {
+      setIsBusy(true);
+      try {
+        const migrated = await withFreshToken((token) =>
+          migrateLegacyBackupToAppDataFolder(token, { deleteLegacy })
+        );
+        // Location moved — do not pretend local data matches the copied file.
+        useSettingsStore.getState().markDriveSynced(migrated.modifiedTime, { keepDirty: true });
+        return migrated;
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [withFreshToken]
+  );
+
   return {
     isReady,
     isLoadingScript,
@@ -391,6 +456,8 @@ export function useGoogleDrive(): UseGoogleDriveResult {
     fetchBackup,
     applyRestore,
     checkRemoteState,
+    findLegacyMigrationCandidate,
+    migrateLegacyBackup,
     isBusy,
   };
 }

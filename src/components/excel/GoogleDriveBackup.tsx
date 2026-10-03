@@ -21,6 +21,8 @@ import {
 import { useGoogleDrive } from '../../hooks/useGoogleDrive';
 import {
   DriveApiDisabledError,
+  DriveConflictError,
+  DriveInsufficientScopeError,
   DriveNetworkError,
   DriveNotFoundError,
   DriveParseError,
@@ -31,6 +33,7 @@ import { buildLocalJsonBackupFileName, downloadJsonBackup } from '../../lib/loca
 import { formatMonthYear } from '../../lib/utils';
 import { useGoogleDriveStore } from '../../store/useGoogleDriveStore';
 import { DriveConflictModal } from './DriveConflictModal';
+import { DriveMigrationModal } from './DriveMigrationModal';
 import { GoogleClientIdModal } from './GoogleClientIdModal';
 
 const REMOTE_NEWER_NOTIFY_ID = 'drive-remote-newer';
@@ -44,6 +47,7 @@ interface GoogleDriveBackupProps {
 function errorMessage(error: unknown): string {
   if (
     error instanceof DriveApiDisabledError ||
+    error instanceof DriveInsufficientScopeError ||
     error instanceof DriveNetworkError ||
     error instanceof DriveNotFoundError ||
     error instanceof DriveParseError
@@ -72,10 +76,13 @@ export function GoogleDriveBackup({
     isBusy,
     signIn,
     signOut,
+    requestAccessToken,
     backupNow,
     fetchBackup,
     applyRestore,
     checkRemoteState,
+    findLegacyMigrationCandidate,
+    migrateLegacyBackup,
   } = useGoogleDrive();
 
   const conflictOpen = useGoogleDriveStore((state) => state.conflictOpen);
@@ -83,6 +90,7 @@ export function GoogleDriveBackup({
 
   const [pendingRestore, setPendingRestore] = useState<DriveBackupDownload | null>(null);
   const [conflictModifiedTime, setConflictModifiedTime] = useState<string | null>(null);
+  const [migrationOpen, setMigrationOpen] = useState<boolean>(false);
   const [clientIdOpened, setClientIdOpened] = useState<boolean>(false);
   const [connectAfterSave, setConnectAfterSave] = useState<boolean>(false);
   const size = compact ? 'xs' : 'sm';
@@ -172,12 +180,29 @@ export function GoogleDriveBackup({
 
   const runSignIn = async (): Promise<void> => {
     try {
-      await signIn();
+      try {
+        await signIn();
+      } catch (error) {
+        if (!(error instanceof DriveInsufficientScopeError)) {
+          throw error;
+        }
+        notifications.show({
+          color: 'yellow',
+          title: 'נדרשת הרשאה נוספת',
+          message: errorMessage(error),
+        });
+        await requestAccessToken({ consent: true });
+      }
       notifications.show({
         color: 'emerald',
         title: 'מחובר ל-Google Drive',
-        message: 'אפשר לגבות ולשחזר את הנתונים בענן.',
+        message: 'הגיבוי נשמר בתיקיית נתונים פרטית של האפליקציה (לא ב«הכונן שלי»).',
       });
+      const legacy = await findLegacyMigrationCandidate();
+      if (legacy !== null) {
+        setMigrationOpen(true);
+        return;
+      }
       await runPostConnectCheck();
     } catch (error) {
       if (error instanceof Error && error.message === 'MISSING_CLIENT_ID') {
@@ -188,6 +213,37 @@ export function GoogleDriveBackup({
       notifications.show({
         color: 'red',
         title: 'שגיאה',
+        message: errorMessage(error),
+      });
+    }
+  };
+
+  const handleMigration = async (deleteLegacy: boolean): Promise<void> => {
+    try {
+      await migrateLegacyBackup(deleteLegacy);
+      setMigrationOpen(false);
+      notifications.show({
+        color: 'emerald',
+        title: 'הגיבוי הועבר',
+        message: deleteLegacy
+          ? 'הגיבוי הועתק לתיקייה הפרטית והקובץ הישן נמחק מ-Drive.'
+          : 'הגיבוי הועתק לתיקייה הפרטית. הקובץ הישן נשאר ב-Drive.',
+      });
+      await runPostConnectCheck();
+    } catch (error) {
+      if (error instanceof DriveConflictError) {
+        setMigrationOpen(false);
+        openConflict(error.remoteModifiedTime);
+        notifications.show({
+          color: 'yellow',
+          title: 'הגיבוי הפרטי כבר קיים',
+          message: 'נמצא גיבוי חדש יותר בתיקייה הפרטית — בחר מה לעשות.',
+        });
+        return;
+      }
+      notifications.show({
+        color: 'red',
+        title: 'שגיאה בהעברת הגיבוי',
         message: errorMessage(error),
       });
     }
@@ -246,7 +302,7 @@ export function GoogleDriveBackup({
       notifications.show({
         color: 'emerald',
         title: 'הגיבוי הושלם',
-        message: 'הנתונים נשמרו בקובץ budgetflow-backup.json ב-Google Drive.',
+        message: 'הנתונים נשמרו בתיקיית הנתונים הפרטית של האפליקציה ב-Google Drive.',
       });
     } catch (error) {
       notifications.show({
@@ -510,6 +566,18 @@ export function GoogleDriveBackup({
         }}
         onDownloadRemoteCopy={() => {
           void handleConflictDownloadCopy();
+        }}
+      />
+
+      <DriveMigrationModal
+        opened={migrationOpen}
+        busy={isBusy}
+        onClose={() => setMigrationOpen(false)}
+        onMigrateAndDelete={() => {
+          void handleMigration(true);
+        }}
+        onMigrateAndKeep={() => {
+          void handleMigration(false);
         }}
       />
 

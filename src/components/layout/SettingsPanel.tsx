@@ -127,7 +127,7 @@ export function SettingsPanel({ opened, onClose }: SettingsPanelProps): JSX.Elem
         notifications.show({
           color: 'yellow',
           title: 'המחיקה המקומית הושלמה',
-          message: `כל הנתונים המקומיים נמחקו, אך לא ניתן היה למחוק את גיבוי Google Drive${result.driveError !== null ? `: ${result.driveError}` : '.'} יש למחוק את הקובץ budgetflow-backup.json ידנית מ-Drive.`,
+          message: `כל הנתונים המקומיים נמחקו, אך לא ניתן היה למחוק את גיבוי Google Drive הפרטי${result.driveError !== null ? `: ${result.driveError}` : '.'} התחבר מחדש ונסה שוב, או מחק את נתוני האפליקציה מחשבון Google.`,
           autoClose: 12_000,
         });
         return;
@@ -138,7 +138,7 @@ export function SettingsPanel({ opened, onClose }: SettingsPanelProps): JSX.Elem
           ? ' גם גיבוי Google Drive נמחק.'
           : result.driveBackup === 'not_found'
             ? ' לא נמצא גיבוי Drive למחיקה.'
-            : ' אם קיים גיבוי ב-Drive והנך לא מחובר — יש למחוק אותו ידנית.';
+            : ' אם קיים גיבוי פרטי ב-Drive והנך לא מחובר — התחבר ומחק שוב.';
 
       notifications.show({
         color: 'emerald',
@@ -272,8 +272,8 @@ export function SettingsPanel({ opened, onClose }: SettingsPanelProps): JSX.Elem
           >
             פעולה זו תמחק את כל ההוצאות, ההכנסות, מפתח ה-AI, Google Client ID והתובנות השמורות.
             {driveConnected
-              ? ' אם קיים גיבוי ב-Google Drive — גם הוא יימחק.'
-              : ' אם קיים גיבוי ב-Google Drive והנך מחובר, גם הוא יימחק; אם אינך מחובר יש למחוק אותו ידנית.'}{' '}
+              ? ' אם קיים גיבוי פרטי ב-Google Drive — גם הוא יימחק.'
+              : ' אם קיים גיבוי פרטי ב-Google Drive והנך מחובר, גם הוא יימחק; אם אינך מחובר — התחבר ומחק שוב.'}{' '}
             לא ניתן לשחזר את הנתונים לאחר המחיקה.
           </Alert>
 

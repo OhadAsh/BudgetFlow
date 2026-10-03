@@ -1,6 +1,8 @@
 import {
   DRIVE_BACKUP_FILE_NAME,
   DRIVE_BACKUP_VERSION,
+  GOOGLE_DRIVE_APPDATA_SCOPE,
+  GOOGLE_DRIVE_FILE_SCOPE,
 } from './constants';
 import type {
   BackupSettings,
@@ -77,6 +79,38 @@ export class DriveApiDisabledError extends Error {
   }
 }
 
+/** Token is missing drive.appdata (and/or drive.file) — caller must re-consent. */
+export class DriveInsufficientScopeError extends Error {
+  constructor(
+    message = 'נדרשת הרשאה נוספת לתיקיית הנתונים הפרטית של האפליקציה ב-Google Drive. אשר את ההרשאה בחלון שיופיע.'
+  ) {
+    super(message);
+    this.name = 'DriveInsufficientScopeError';
+  }
+}
+
+/**
+ * True when the GIS token response includes every scope BudgetFlow needs.
+ * Prefers GIS hasGrantedAllScopes (handles incremental grants); falls back to the scope string.
+ */
+export function tokenHasRequiredDriveScopes(response: {
+  scope?: string;
+}): boolean {
+  if (window.google?.accounts?.oauth2?.hasGrantedAllScopes) {
+    return window.google.accounts.oauth2.hasGrantedAllScopes(
+      response as GoogleTokenResponse,
+      GOOGLE_DRIVE_APPDATA_SCOPE,
+      GOOGLE_DRIVE_FILE_SCOPE
+    );
+  }
+  const scopeField = response.scope;
+  if (typeof scopeField !== 'string' || scopeField.trim().length === 0) {
+    return false;
+  }
+  const granted = new Set(scopeField.split(/\s+/).filter((part) => part.length > 0));
+  return granted.has(GOOGLE_DRIVE_APPDATA_SCOPE) && granted.has(GOOGLE_DRIVE_FILE_SCOPE);
+}
+
 interface DriveFileListResponse {
   files?: DriveFileResource[];
 }
@@ -135,6 +169,15 @@ async function throwIfDriveApiDisabled(response: Response): Promise<void> {
   ) {
     throw new DriveApiDisabledError();
   }
+  if (
+    reason === 'insufficientPermissions' ||
+    reason === 'insufficientPermission' ||
+    reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' ||
+    message.includes('insufficient authentication scopes') ||
+    message.includes('Insufficient Permission')
+  ) {
+    throw new DriveInsufficientScopeError();
+  }
 }
 
 async function driveFetch(url: string, init: RequestInit): Promise<Response> {
@@ -154,15 +197,14 @@ async function driveFetch(url: string, init: RequestInit): Promise<Response> {
   return response;
 }
 
-/**
- * Metadata-only lookup of the app backup file (no content download).
- * Returns null when the user has no backup on Drive yet.
- */
-export async function findBackupFile(token: string): Promise<DriveBackupFileMeta | null> {
+async function findBackupFileInSpace(
+  token: string,
+  spaces: 'appDataFolder' | 'drive'
+): Promise<DriveBackupFileMeta | null> {
   const query = `name='${DRIVE_BACKUP_FILE_NAME}' and trashed=false`;
   const params = new URLSearchParams({
     q: query,
-    spaces: 'drive',
+    spaces,
     fields: 'files(id,name,modifiedTime)',
     pageSize: '1',
   });
@@ -184,14 +226,37 @@ export async function findBackupFile(token: string): Promise<DriveBackupFileMeta
   return { id: file.id, modifiedTime: file.modifiedTime ?? null };
 }
 
-/** Finds the app backup file id, or null if it does not exist. */
+/**
+ * Metadata-only lookup of the live backup in the private appDataFolder.
+ * Returns null when the user has no backup there yet.
+ */
+export async function findBackupFile(token: string): Promise<DriveBackupFileMeta | null> {
+  return findBackupFileInSpace(token, 'appDataFolder');
+}
+
+/**
+ * Legacy My Drive copy created by older builds (drive.file). Used only for migration.
+ */
+export async function findLegacyMyDriveBackupFile(
+  token: string
+): Promise<DriveBackupFileMeta | null> {
+  return findBackupFileInSpace(token, 'drive');
+}
+
+/** Finds the appDataFolder backup file id, or null if it does not exist. */
 export async function findBackupFileId(token: string): Promise<string | null> {
   const file = await findBackupFile(token);
   return file?.id ?? null;
 }
 
+type DriveUploadMetadata = {
+  name?: string;
+  mimeType: string;
+  parents?: string[];
+};
+
 function buildMultipartBody(
-  metadata: Record<string, string>,
+  metadata: DriveUploadMetadata,
   jsonBody: string
 ): { body: string; contentType: string } {
   const boundary = `budgetflow_${crypto.randomUUID().replace(/-/g, '')}`;
@@ -560,20 +625,18 @@ async function readModifiedTime(token: string, fileId: string): Promise<string |
   }
 }
 
-export async function uploadBackupToDrive(
+async function uploadJsonToAppDataFolder(
   token: string,
-  data: DriveBackupPayload,
-  baseline?: DriveUploadBaseline
+  jsonBody: string,
+  existingId: string | null
 ): Promise<DriveFileResource> {
-  const jsonBody = JSON.stringify(data);
-  const current = await findBackupFile(token);
-  if (baseline !== undefined && remoteChangedSinceBaseline(baseline, current)) {
-    throw new DriveConflictError(current?.modifiedTime ?? null);
-  }
-  const existingId = current?.id ?? null;
-  const metadata: Record<string, string> = existingId
+  const metadata: DriveUploadMetadata = existingId
     ? { mimeType: 'application/json' }
-    : { name: DRIVE_BACKUP_FILE_NAME, mimeType: 'application/json' };
+    : {
+        name: DRIVE_BACKUP_FILE_NAME,
+        mimeType: 'application/json',
+        parents: ['appDataFolder'],
+      };
 
   const multipart = buildMultipartBody(metadata, jsonBody);
   const fields = 'fields=id,name,modifiedTime';
@@ -603,15 +666,22 @@ export async function uploadBackupToDrive(
   return modifiedTime === null ? file : { ...file, modifiedTime };
 }
 
-/** Locates the backup file and returns its decoded JSON payload plus its Drive stamp. */
-export async function downloadBackupFromDrive(token: string): Promise<DriveBackupDownload> {
-  const file = await findBackupFile(token);
-  if (file === null) {
-    throw new DriveNotFoundError();
+export async function uploadBackupToDrive(
+  token: string,
+  data: DriveBackupPayload,
+  baseline?: DriveUploadBaseline
+): Promise<DriveFileResource> {
+  const jsonBody = JSON.stringify(data);
+  const current = await findBackupFile(token);
+  if (baseline !== undefined && remoteChangedSinceBaseline(baseline, current)) {
+    throw new DriveConflictError(current?.modifiedTime ?? null);
   }
+  return uploadJsonToAppDataFolder(token, jsonBody, current?.id ?? null);
+}
 
+async function downloadDriveFileText(token: string, fileId: string): Promise<string> {
   const response = await driveFetch(
-    `${DRIVE_API}/files/${encodeURIComponent(file.id)}?alt=media`,
+    `${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`,
     {
       method: 'GET',
       headers: authHeaders(token),
@@ -622,9 +692,80 @@ export async function downloadBackupFromDrive(token: string): Promise<DriveBacku
     throw new DriveNetworkError(`הורדת הגיבוי נכשלה (${response.status}).`);
   }
 
+  try {
+    return await response.text();
+  } catch {
+    throw new DriveParseError('לא ניתן לפענח את תוכן קובץ הגיבוי.');
+  }
+}
+
+async function deleteDriveFileById(token: string, fileId: string): Promise<'deleted' | 'not_found'> {
+  const response = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+
+  if (response.status === 404) {
+    return 'not_found';
+  }
+  if (!response.ok) {
+    throw new DriveNetworkError(`מחיקת הגיבוי מ-Drive נכשלה (${response.status}).`);
+  }
+  return 'deleted';
+}
+
+/**
+ * Copies a legacy My Drive backup into appDataFolder.
+ * Never overwrites an existing appDataFolder file (conflict instead).
+ */
+export async function migrateLegacyBackupToAppDataFolder(
+  token: string,
+  options: { deleteLegacy: boolean }
+): Promise<DriveBackupFileMeta> {
+  const existing = await findBackupFile(token);
+  if (existing !== null) {
+    throw new DriveConflictError(existing.modifiedTime);
+  }
+
+  const legacy = await findLegacyMyDriveBackupFile(token);
+  if (legacy === null) {
+    throw new DriveNotFoundError('לא נמצא גיבוי ישן להעברה מ-Drive.');
+  }
+
+  const jsonBody = await downloadDriveFileText(token, legacy.id);
+
+  // Race: another device may have written appDataFolder between the checks.
+  const raced = await findBackupFile(token);
+  if (raced !== null) {
+    throw new DriveConflictError(raced.modifiedTime);
+  }
+
+  const created = await uploadJsonToAppDataFolder(token, jsonBody, null);
+  if (typeof created.id !== 'string' || created.id.length === 0) {
+    throw new DriveNetworkError('העברת הגיבוי לתיקייה הפרטית נכשלה.');
+  }
+
+  if (options.deleteLegacy) {
+    await deleteDriveFileById(token, legacy.id);
+  }
+
+  return {
+    id: created.id,
+    modifiedTime: created.modifiedTime ?? null,
+  };
+}
+
+/** Locates the appDataFolder backup and returns its decoded JSON plus Drive stamp. */
+export async function downloadBackupFromDrive(token: string): Promise<DriveBackupDownload> {
+  const file = await findBackupFile(token);
+  if (file === null) {
+    throw new DriveNotFoundError();
+  }
+
+  const text = await downloadDriveFileText(token, file.id);
   let raw: unknown;
   try {
-    raw = await response.json();
+    raw = JSON.parse(text) as unknown;
   } catch {
     throw new DriveParseError('לא ניתן לפענח את תוכן קובץ הגיבוי.');
   }
@@ -684,7 +825,7 @@ export function allowRemoteLoadNotification(
 }
 
 /**
- * Permanently deletes the app backup file from Drive when present.
+ * Permanently deletes the appDataFolder backup when present.
  * Returns not_found when there is nothing to delete.
  */
 export async function deleteBackupFromDrive(token: string): Promise<'deleted' | 'not_found'> {
@@ -692,17 +833,5 @@ export async function deleteBackupFromDrive(token: string): Promise<'deleted' | 
   if (fileId === null) {
     return 'not_found';
   }
-
-  const response = await driveFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}`, {
-    method: 'DELETE',
-    headers: authHeaders(token),
-  });
-
-  if (response.status === 404) {
-    return 'not_found';
-  }
-  if (!response.ok) {
-    throw new DriveNetworkError(`מחיקת הגיבוי מ-Drive נכשלה (${response.status}).`);
-  }
-  return 'deleted';
+  return deleteDriveFileById(token, fileId);
 }

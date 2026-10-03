@@ -23,6 +23,11 @@ interface GoogleTokenClient {
 interface GoogleAccountsOAuth2 {
   initTokenClient: (config: GoogleTokenClientConfig) => GoogleTokenClient;
   revoke: (accessToken: string, done?: () => void) => void;
+  hasGrantedAllScopes: (
+    tokenResponse: GoogleTokenResponse,
+    firstScope: string,
+    ...restScopes: string[]
+  ) => boolean;
 }
 
 interface GoogleAccounts {

@@ -2,8 +2,18 @@ import type { BuiltInCategory, CategoryKind, CategoryType, MonthData } from '../
 
 export const STORAGE_KEY = 'expense-tracker-v1';
 
-/** Only files created/opened by this app — never full Drive access. */
-export const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+/** Private Application Data folder — where the live backup file lives. */
+export const GOOGLE_DRIVE_APPDATA_SCOPE =
+  'https://www.googleapis.com/auth/drive.appdata';
+
+/**
+ * Per-file access for the legacy My Drive backup this app created before the
+ * move to appDataFolder (read / delete during migration only).
+ */
+export const GOOGLE_DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+/** Both scopes, space-separated for the GIS token client. */
+export const GOOGLE_DRIVE_SCOPE = `${GOOGLE_DRIVE_APPDATA_SCOPE} ${GOOGLE_DRIVE_FILE_SCOPE}`;
 
 /** Fixed backup file name so upload updates the same file instead of duplicating. */
 export const DRIVE_BACKUP_FILE_NAME = 'budgetflow-backup.json';

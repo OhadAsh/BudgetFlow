@@ -186,30 +186,46 @@ export function LocalDataBackupSettings(): JSX.Element {
         allowDeselect={false}
       />
 
-      <Text fz="xs" c="dimmed">
-        דפדפנים לעיתים חוסמים הורדה בלי לחיצה ידנית. אם הקובץ לא יורד אוטומטית — השתמשו בכפתור
-        «גבה מקומית».
-      </Text>
+      {autoBackupFormat === 'xlsx' ? (
+        <Text fz="xs" c="dimmed" ta="right">
+          קובץ Excel אינו כולל מפתח API. המפתח נשמר רק בגיבוי Google Drive (תמיד), ובקובץ JSON
+          מקומי רק אם תבחרו בכך.
+        </Text>
+      ) : (
+        <Checkbox
+          checked={includeApiKey}
+          onChange={(event) => setIncludeApiKey(event.currentTarget.checked)}
+          disabled={!hasApiKey}
+          color="emerald"
+          label="כלול מפתח API בקובץ JSON"
+          description={
+            hasApiKey
+              ? 'רק בקובץ JSON המקומי — לא באקסל. בגיבוי Google Drive המפתח נשמר תמיד. אזהרה: המפתח יופיע בטקסט גלוי.'
+              : 'אין מפתח OpenRouter שמור במכשיר הזה. בגיבוי Google Drive המפתח נשמר אוטומטית כשיש מפתח.'
+          }
+          styles={{
+            body: { alignItems: 'flex-start' },
+            labelWrapper: { flex: 1 },
+            description: { lineHeight: 1.45, marginTop: 4 },
+          }}
+        />
+      )}
 
-      <Checkbox
-        checked={includeApiKey}
-        onChange={(event) => setIncludeApiKey(event.currentTarget.checked)}
-        disabled={!hasApiKey}
-        color="emerald"
-        label="כלול מפתח API בקובץ"
-        description={
-          hasApiKey
-            ? 'אזהרה: הקובץ יכיל את מפתח ה-OpenRouter שלך בטקסט גלוי. שמור אותו במקום בטוח ואל תשתף אותו.'
-            : 'אין מפתח OpenRouter שמור במכשיר הזה.'
-        }
-      />
+      <Text fz="xs" c="dimmed" ta="right">
+        דפדפנים לעיתים חוסמים הורדה בלי לחיצה ידנית. אם הקובץ לא יורד אוטומטית — השתמשו בכפתור
+        «גבה מקומית עכשיו».
+      </Text>
 
       <Button
         color="blue"
         radius="xl"
+        justify="flex-start"
         leftSection={<IconDownload size={16} />}
         onClick={() => {
-          backupNow({ includeApiKey });
+          // Excel never carries the key; only a local JSON download may include it.
+          backupNow({
+            includeApiKey: autoBackupFormat !== 'xlsx' && includeApiKey,
+          });
         }}
         fullWidth
       >
@@ -219,10 +235,10 @@ export function LocalDataBackupSettings(): JSX.Element {
       <Divider />
 
       <Stack gap="xs">
-        <Text fw={600} fz="sm">
+        <Text fw={600} fz="sm" ta="right">
           שחזור מקובץ גיבוי
         </Text>
-        <Text fz="xs" c="dimmed">
+        <Text fz="xs" c="dimmed" ta="right">
           טעינת קובץ JSON שנוצר באפליקציה (מקומי או מ-Drive). כל הנתונים הנוכחיים במכשיר יוחלפו.
         </Text>
         <FileButton
@@ -237,6 +253,7 @@ export function LocalDataBackupSettings(): JSX.Element {
               variant="light"
               color="gray"
               radius="xl"
+              justify="flex-start"
               leftSection={<IconRestore size={16} />}
               fullWidth
             >

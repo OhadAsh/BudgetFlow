@@ -180,7 +180,7 @@ export function ExcelControls({
       notifications.show({
         color: 'yellow',
         title: 'המחיקה המקומית הושלמה',
-        message: `כל הנתונים המקומיים נמחקו, אך לא ניתן היה למחוק את גיבוי Google Drive${result.driveError !== null ? `: ${result.driveError}` : '.'} יש למחוק את budgetflow-backup.json ידנית מ-Drive.`,
+        message: `כל הנתונים המקומיים נמחקו, אך לא ניתן היה למחוק את גיבוי Google Drive הפרטי${result.driveError !== null ? `: ${result.driveError}` : '.'} התחבר מחדש ונסה שוב, או מחק את נתוני האפליקציה מחשבון Google.`,
         autoClose: 12_000,
       });
       return;
@@ -191,7 +191,7 @@ export function ExcelControls({
         ? ' גם גיבוי Google Drive נמחק.'
         : result.driveBackup === 'not_found'
           ? ''
-          : ' אם קיים גיבוי ב-Drive יש למחוק אותו ידנית כשאינך מחובר.';
+          : ' אם קיים גיבוי פרטי ב-Drive והנך לא מחובר — התחבר ומחק שוב.';
 
     notifications.show({
       color: 'red',
@@ -259,8 +259,8 @@ export function ExcelControls({
                     <Text fz="sm">
                       הפעולה תמחק את כל החודשים, מפתח ה-AI, Google Client ID והתובנות השמורות מהדפדפן
                       {driveConnected
-                        ? ', וגם את גיבוי Google Drive אם קיים'
-                        : ' (אם קיים גיבוי ב-Drive והנך מחובר — גם הוא יימחק)'}
+                        ? ', וגם את גיבוי Google Drive הפרטי אם קיים'
+                        : ' (אם קיים גיבוי פרטי ב-Drive והנך מחובר — גם הוא יימחק)'}
                       , ואינה ניתנת לשחזור.
                     </Text>
                     <Group gap="xs">
