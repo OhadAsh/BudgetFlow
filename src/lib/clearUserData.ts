@@ -65,10 +65,15 @@ export async function clearAllUserDataIncludingDrive(): Promise<ClearAllResult> 
 
 /**
  * Full overwrite restore from a Drive (or local JSON) snapshot — replaces
- * expense-tracker-v1 entirely and restores only the OpenRouter key from
- * expense-settings-v1. Does not touch Google Client ID.
+ * expense-tracker-v1 entirely and applies the settings block from the backup.
+ * Settings the file does not carry (an export made without the API key, or a
+ * version 1–3 file) keep their current local value instead of being wiped.
  */
 export function applyFullBackupRestore(payload: DriveBackupPayload): void {
   useExpenseStore.getState().restoreFromBackup(payload);
-  useSettingsStore.getState().setOpenRouterApiKey(payload.openRouterApiKey);
+  useSettingsStore
+    .getState()
+    .restoreSettingsFromBackup(
+      payload.settings ?? { openRouterApiKey: payload.openRouterApiKey }
+    );
 }

@@ -42,6 +42,8 @@ export interface UseMonthDataResult {
   excludeOutliersFromStats: boolean;
   /** Out-of-flow categories summarised as project cost meters. */
   outOfFlowProjects: OutOfFlowProject[];
+  /** Fingerprints of the single transactions the user excluded from every statistic. */
+  excludedTransactions: ReadonlySet<string>;
 }
 
 /** Single source of truth for everything derived from the selected month. */
@@ -50,21 +52,28 @@ export function useMonthData(): UseMonthDataResult {
   const year = useExpenseStore((state) => state.selectedYear);
   const month = useExpenseStore((state) => state.selectedMonth);
   const customCategories = useExpenseStore((state) => state.customCategories);
+  const excludedList = useExpenseStore((state) => state.excludedTransactions);
   const excludeOutliersFromStats = useSettingsStore((state) => state.excludeOutliersFromStats);
 
   return useMemo<UseMonthDataResult>(() => {
     const kinds = buildCategoryKindMap(customCategories);
+    const excluded: ReadonlySet<string> = new Set(excludedList);
     const monthData = findMonth(months, year, month) ?? createEmptyMonth(year, month);
-    const stats = getMonthStats(monthData, kinds);
+    const stats = getMonthStats(monthData, kinds, excluded);
 
     const previous = previousPeriod(year, month);
-    const previousStats = getMonthStats(findMonth(months, previous.year, previous.month), kinds);
+    const previousStats = getMonthStats(
+      findMonth(months, previous.year, previous.month),
+      kinds,
+      excluded
+    );
 
-    const breakdown = getCategoryBreakdown(monthData.expenses, customCategories);
-    const monthlySeriesRaw = getMonthlySeries(months, year, { kinds });
+    const breakdown = getCategoryBreakdown(monthData.expenses, customCategories, excluded);
+    const monthlySeriesRaw = getMonthlySeries(months, year, { kinds, excluded });
     const monthlySeries = getMonthlySeries(months, year, {
       excludeOutliers: excludeOutliersFromStats,
       kinds,
+      excluded,
     });
 
     return {
@@ -83,6 +92,7 @@ export function useMonthData(): UseMonthDataResult {
       annualStats: getAnnualStats(months, year, {
         excludeOutliers: excludeOutliersFromStats,
         kinds,
+        excluded,
       }),
       availableYears: getAvailableYears(months, currentYear()),
       monthsWithData: monthlySeriesRaw
@@ -92,7 +102,8 @@ export function useMonthData(): UseMonthDataResult {
         .filter((point) => point.isOutlier)
         .map((point) => point.month),
       excludeOutliersFromStats,
-      outOfFlowProjects: getOutOfFlowProjects(months, customCategories, year),
+      outOfFlowProjects: getOutOfFlowProjects(months, customCategories, year, excluded),
+      excludedTransactions: excluded,
     };
-  }, [months, year, month, customCategories, excludeOutliersFromStats]);
+  }, [months, year, month, customCategories, excludedList, excludeOutliersFromStats]);
 }

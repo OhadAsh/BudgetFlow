@@ -12,7 +12,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { IconCalendarShare, IconX } from '@tabler/icons-react';
+import { IconCalendarShare, IconEye, IconEyeOff, IconX } from '@tabler/icons-react';
 import type { Expense } from '../../types';
 import { COLORS } from '../../lib/constants';
 import {
@@ -33,13 +33,21 @@ interface ExpenseRowProps {
   expense: Expense;
   year: number;
   month: number;
+  /** True when this transaction is excluded from every total and chart. */
+  excluded?: boolean;
 }
 
 type EditingField = 'category' | 'description' | 'amount' | null;
 
-export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Element {
+export function ExpenseRow({
+  expense,
+  year,
+  month,
+  excluded = false,
+}: ExpenseRowProps): JSX.Element {
   const updateExpense = useExpenseStore((state) => state.updateExpense);
   const removeExpense = useExpenseStore((state) => state.removeExpense);
+  const setExpenseExcluded = useExpenseStore((state) => state.setExpenseExcluded);
   const rememberMerchant = useExpenseStore((state) => state.rememberMerchant);
   const customCategories = useExpenseStore((state) => state.customCategories);
   const [editing, setEditing] = useState<EditingField>(null);
@@ -64,7 +72,7 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
   };
 
   return (
-    <Table.Tr>
+    <Table.Tr style={excluded ? { opacity: 0.55 } : undefined}>
       <Table.Td>
         {editing === 'category' ? (
           <Select
@@ -110,6 +118,19 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
               >
                 <Badge size="xs" color="gray" variant="light" radius="sm" tabIndex={0}>
                   לא בתזרים
+                </Badge>
+              </Tooltip>
+            )}
+            {excluded && (
+              <Tooltip
+                label="העסקה הוחרגה ידנית — היא מוצגת ברשימה אבל לא נספרת בסיכומים ובגרפים."
+                withArrow
+                multiline
+                maw={240}
+                events={{ hover: true, focus: true, touch: true }}
+              >
+                <Badge size="xs" color="orange" variant="light" radius="sm" tabIndex={0}>
+                  מוחרגת
                 </Badge>
               </Tooltip>
             )}
@@ -254,16 +275,37 @@ export function ExpenseRow({ expense, year, month }: ExpenseRowProps): JSX.Eleme
       </Table.Td>
 
       <Table.Td>
-        <ActionIcon
-          variant="subtle"
-          color="red"
-          size="sm"
-          radius="xl"
-          aria-label={`מחיקת הוצאה ${expense.description}`}
-          onClick={() => removeExpense(year, month, expense.id)}
-        >
-          <IconX size={15} />
-        </ActionIcon>
+        <Group gap={2} wrap="nowrap" justify="flex-end">
+          <Tooltip
+            label={excluded ? 'החזר לספירה בסיכומים' : 'החרג מהסיכומים והגרפים'}
+            withArrow
+          >
+            <ActionIcon
+              variant="subtle"
+              color={excluded ? 'orange' : 'gray'}
+              size="sm"
+              radius="xl"
+              aria-label={
+                excluded
+                  ? `החזרת ההוצאה ${expense.description} לספירה`
+                  : `החרגת ההוצאה ${expense.description} מהסיכומים`
+              }
+              onClick={() => setExpenseExcluded(year, month, expense.id, !excluded)}
+            >
+              {excluded ? <IconEyeOff size={15} /> : <IconEye size={15} />}
+            </ActionIcon>
+          </Tooltip>
+          <ActionIcon
+            variant="subtle"
+            color="red"
+            size="sm"
+            radius="xl"
+            aria-label={`מחיקת הוצאה ${expense.description}`}
+            onClick={() => removeExpense(year, month, expense.id)}
+          >
+            <IconX size={15} />
+          </ActionIcon>
+        </Group>
       </Table.Td>
     </Table.Tr>
   );

@@ -71,6 +71,22 @@ function buildDisambiguatedCoreHash(input: TransactionFingerprintInput): string 
   );
 }
 
+/** Marks fingerprints derived for rows that were typed in rather than imported. */
+const LOCAL_FINGERPRINT_PREFIX = 'local:';
+
+/**
+ * Stable key used to remember that a transaction is excluded from the statistics.
+ * Imported rows already carry a fingerprint; manual rows get a deterministic one
+ * derived from their own fields so the key survives an export/import round trip.
+ */
+export function buildExpenseExclusionKey(expense: Expense): string {
+  if (typeof expense.hash === 'string' && expense.hash.length > 0) {
+    return expense.hash;
+  }
+  const raw = `${expense.date ?? ''}|${expense.description.trim()}|${expense.amount}|${expense.category}`;
+  return `${LOCAL_FINGERPRINT_PREFIX}${encodeFingerprint(raw)}`;
+}
+
 /** Every key that should count as "already imported" for a stored expense. */
 export function fingerprintKeysForExpense(expense: Expense): string[] {
   const keys = new Set<string>();

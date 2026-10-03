@@ -1,4 +1,4 @@
-import type { DriveBackupPayload } from '../types';
+import type { AutoBackupFormat, BackupSettings, DriveBackupPayload } from '../types';
 import { DRIVE_BACKUP_FILE_NAME } from './constants';
 import {
   buildExportFileName,
@@ -7,7 +7,7 @@ import {
 } from './excelParser';
 import { buildDriveBackupPayload } from './googleDrive';
 
-export type AutoBackupFormat = 'json' | 'xlsx' | 'both';
+export type { AutoBackupFormat };
 
 export const AUTO_BACKUP_INTERVAL_OPTIONS = [
   { value: '1', label: 'כל יום' },
@@ -25,7 +25,10 @@ export interface LocalBackupSnapshotInput {
   customCategories: DriveBackupPayload['customCategories'];
   merchantMemory: DriveBackupPayload['merchantMemory'];
   categoryTargets: DriveBackupPayload['categoryTargets'];
+  excludedTransactions?: string[];
+  /** Only set when the user opted in to writing the secret into the file. */
   openRouterApiKey?: string | null;
+  settings?: BackupSettings;
 }
 
 /** True when a prior backup exists and the configured interval has elapsed. */

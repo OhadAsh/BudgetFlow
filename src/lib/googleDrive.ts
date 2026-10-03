@@ -3,6 +3,8 @@ import {
   DRIVE_BACKUP_VERSION,
 } from './constants';
 import type {
+  AutoBackupFormat,
+  BackupSettings,
   CategoryKind,
   CategoryTargets,
   CustomCategory,
@@ -12,6 +14,7 @@ import type {
   MerchantMemory,
   MonthData,
 } from '../types';
+import { normalizeColorSchemeMode, normalizeHourValue, HOUR_DARK_BEFORE, HOUR_DARK_FROM } from './colorScheme';
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
@@ -65,12 +68,26 @@ export class DriveApiDisabledError extends Error {
 }
 
 interface DriveFileListResponse {
-  files?: Array<{ id: string; name: string }>;
+  files?: DriveFileResource[];
 }
 
 interface DriveFileResource {
   id: string;
   name: string;
+  /** RFC 3339 timestamp of the last content change on Drive. */
+  modifiedTime?: string;
+}
+
+/** Drive-side identity of the backup file — used to detect a newer remote copy. */
+export interface DriveBackupFileMeta {
+  id: string;
+  modifiedTime: string | null;
+}
+
+/** A downloaded backup plus the Drive stamp it was read at. */
+export interface DriveBackupDownload {
+  payload: DriveBackupPayload;
+  modifiedTime: string | null;
 }
 
 function authHeaders(token: string): HeadersInit {
@@ -127,13 +144,16 @@ async function driveFetch(url: string, init: RequestInit): Promise<Response> {
   return response;
 }
 
-/** Finds the app backup file id, or null if it does not exist. */
-export async function findBackupFileId(token: string): Promise<string | null> {
+/**
+ * Metadata-only lookup of the app backup file (no content download).
+ * Returns null when the user has no backup on Drive yet.
+ */
+export async function findBackupFile(token: string): Promise<DriveBackupFileMeta | null> {
   const query = `name='${DRIVE_BACKUP_FILE_NAME}' and trashed=false`;
   const params = new URLSearchParams({
     q: query,
     spaces: 'drive',
-    fields: 'files(id,name)',
+    fields: 'files(id,name,modifiedTime)',
     pageSize: '1',
   });
 
@@ -148,6 +168,15 @@ export async function findBackupFileId(token: string): Promise<string | null> {
 
   const data = (await response.json()) as DriveFileListResponse;
   const file = data.files?.[0];
+  if (file === undefined) {
+    return null;
+  }
+  return { id: file.id, modifiedTime: file.modifiedTime ?? null };
+}
+
+/** Finds the app backup file id, or null if it does not exist. */
+export async function findBackupFileId(token: string): Promise<string | null> {
+  const file = await findBackupFile(token);
   return file?.id ?? null;
 }
 
@@ -182,8 +211,15 @@ export function buildDriveBackupPayload(input: {
   customCategories: CustomCategory[];
   merchantMemory: MerchantMemory;
   categoryTargets: CategoryTargets;
+  excludedTransactions?: string[];
   openRouterApiKey?: string | null;
+  settings?: BackupSettings;
 }): DriveBackupPayload {
+  const openRouterApiKey =
+    typeof input.openRouterApiKey === 'string' && input.openRouterApiKey.trim().length > 0
+      ? input.openRouterApiKey
+      : null;
+
   return {
     version: DRIVE_BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
@@ -193,10 +229,13 @@ export function buildDriveBackupPayload(input: {
     customCategories: input.customCategories,
     merchantMemory: input.merchantMemory,
     categoryTargets: input.categoryTargets,
-    openRouterApiKey:
-      typeof input.openRouterApiKey === 'string' && input.openRouterApiKey.trim().length > 0
-        ? input.openRouterApiKey
-        : null,
+    excludedTransactions: Array.isArray(input.excludedTransactions)
+      ? [...input.excludedTransactions]
+      : [],
+    openRouterApiKey,
+    ...(input.settings !== undefined
+      ? { settings: { ...input.settings, openRouterApiKey } }
+      : {}),
   };
 }
 
@@ -303,6 +342,51 @@ function parseCategoryTargets(value: unknown): CategoryTargets {
   return result;
 }
 
+function parseAutoBackupFormat(value: unknown, fallback: AutoBackupFormat): AutoBackupFormat {
+  return value === 'json' || value === 'xlsx' || value === 'both' ? value : fallback;
+}
+
+function parseIntervalDays(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(365, Math.max(1, Math.round(value)));
+}
+
+function parseOptionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+/**
+ * Settings block of a version 4 backup. Version 1–3 files have no block, so
+ * every field falls back to the app default and only the top-level API key survives.
+ */
+function parseBackupSettings(value: unknown, openRouterApiKey: string | null): BackupSettings {
+  const raw = isRecord(value) ? value : {};
+  return {
+    openRouterApiKey: parseOptionalString(raw.openRouterApiKey) ?? openRouterApiKey,
+    googleOAuthClientId: parseOptionalString(raw.googleOAuthClientId),
+    autoBackupEnabled: typeof raw.autoBackupEnabled === 'boolean' ? raw.autoBackupEnabled : true,
+    autoBackupIntervalDays: parseIntervalDays(raw.autoBackupIntervalDays, 7),
+    autoBackupFormat: parseAutoBackupFormat(raw.autoBackupFormat, 'json'),
+    lastLocalBackupAt: parseOptionalString(raw.lastLocalBackupAt),
+    excludeOutliersFromStats:
+      typeof raw.excludeOutliersFromStats === 'boolean' ? raw.excludeOutliersFromStats : true,
+    colorSchemeMode: normalizeColorSchemeMode(raw.colorSchemeMode),
+    hourDarkBefore: normalizeHourValue(raw.hourDarkBefore, HOUR_DARK_BEFORE),
+    hourDarkFrom: normalizeHourValue(raw.hourDarkFrom, HOUR_DARK_FROM),
+  };
+}
+
+function parseExcludedTransactions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const keys = new Set<string>();
+  value.forEach((entry) => {
+    if (typeof entry === 'string' && entry.trim().length > 0) {
+      keys.add(entry);
+    }
+  });
+  return Array.from(keys);
+}
+
 /** Validates and normalizes JSON downloaded from Drive. */
 export function parseDriveBackupPayload(raw: unknown): DriveBackupPayload {
   if (!isRecord(raw)) {
@@ -343,7 +427,9 @@ export function parseDriveBackupPayload(raw: unknown): DriveBackupPayload {
     customCategories,
     merchantMemory: parseMerchantMemory(raw.merchantMemory),
     categoryTargets: parseCategoryTargets(raw.categoryTargets),
+    excludedTransactions: parseExcludedTransactions(raw.excludedTransactions),
     openRouterApiKey,
+    settings: parseBackupSettings(raw.settings, openRouterApiKey),
   };
 }
 
@@ -377,9 +463,10 @@ export async function uploadBackupToDrive(
     : { name: DRIVE_BACKUP_FILE_NAME, mimeType: 'application/json' };
 
   const multipart = buildMultipartBody(metadata, jsonBody);
+  const fields = 'fields=id,name,modifiedTime';
   const url = existingId
-    ? `${DRIVE_UPLOAD_API}/files/${encodeURIComponent(existingId)}?uploadType=multipart`
-    : `${DRIVE_UPLOAD_API}/files?uploadType=multipart`;
+    ? `${DRIVE_UPLOAD_API}/files/${encodeURIComponent(existingId)}?uploadType=multipart&${fields}`
+    : `${DRIVE_UPLOAD_API}/files?uploadType=multipart&${fields}`;
 
   const response = await driveFetch(url, {
     method: existingId ? 'PATCH' : 'POST',
@@ -398,15 +485,15 @@ export async function uploadBackupToDrive(
   return file;
 }
 
-/** Locates the backup file and returns its decoded JSON payload. */
-export async function downloadBackupFromDrive(token: string): Promise<DriveBackupPayload> {
-  const fileId = await findBackupFileId(token);
-  if (fileId === null) {
+/** Locates the backup file and returns its decoded JSON payload plus its Drive stamp. */
+export async function downloadBackupFromDrive(token: string): Promise<DriveBackupDownload> {
+  const file = await findBackupFile(token);
+  if (file === null) {
     throw new DriveNotFoundError();
   }
 
   const response = await driveFetch(
-    `${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`,
+    `${DRIVE_API}/files/${encodeURIComponent(file.id)}?alt=media`,
     {
       method: 'GET',
       headers: authHeaders(token),
@@ -424,7 +511,23 @@ export async function downloadBackupFromDrive(token: string): Promise<DriveBacku
     throw new DriveParseError('לא ניתן לפענח את תוכן קובץ הגיבוי.');
   }
 
-  return parseDriveBackupPayload(raw);
+  return { payload: parseDriveBackupPayload(raw), modifiedTime: file.modifiedTime };
+}
+
+/**
+ * True when the Drive copy changed after the stamp recorded at the last sync.
+ * A missing local stamp counts as "newer" — the app has never seen that file.
+ */
+export function isRemoteNewer(
+  remoteModifiedTime: string | null,
+  lastSyncedRemoteModifiedTime: string | null
+): boolean {
+  if (remoteModifiedTime === null) return false;
+  if (lastSyncedRemoteModifiedTime === null) return true;
+  const remoteMs = Date.parse(remoteModifiedTime);
+  const syncedMs = Date.parse(lastSyncedRemoteModifiedTime);
+  if (!Number.isFinite(remoteMs) || !Number.isFinite(syncedMs)) return true;
+  return remoteMs > syncedMs;
 }
 
 /**

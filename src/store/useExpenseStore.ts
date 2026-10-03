@@ -11,6 +11,7 @@ import type {
   MonthData,
 } from '../types';
 import { STORAGE_KEY, createSeedMonths } from '../lib/constants';
+import { buildExpenseExclusionKey } from '../lib/transactionIdentity';
 import { applyMerchantMemoryToMonths, clampMonth, currentMonth, currentYear, normalizeMerchantName } from '../lib/utils';
 
 interface ExpenseState {
@@ -21,6 +22,11 @@ interface ExpenseState {
   merchantMemory: MerchantMemory;
   /** Optional monthly spending targets (₪) keyed by category name. */
   categoryTargets: CategoryTargets;
+  /**
+   * Transaction fingerprints (`Expense.hash`) the user excluded one by one.
+   * Keyed by hash — not by id — so exclusions survive an export/import round trip.
+   */
+  excludedTransactions: string[];
 
   setSelectedPeriod: (year: number, month: number) => void;
   setSelectedYear: (year: number) => void;
@@ -29,6 +35,13 @@ interface ExpenseState {
   addExpense: (year: number, month: number, expense: Omit<Expense, 'id'>) => void;
   updateExpense: (year: number, month: number, id: string, patch: Partial<Expense>) => void;
   removeExpense: (year: number, month: number, id: string) => void;
+
+  /**
+   * Excludes / re-includes a single transaction from every total and chart.
+   * Rows without a fingerprint get one assigned so the exclusion stays attached
+   * through later edits and through export/import.
+   */
+  setExpenseExcluded: (year: number, month: number, id: string, excluded: boolean) => void;
 
   addIncome: (year: number, month: number, source: Omit<IncomeSource, 'id'>) => void;
   updateIncome: (year: number, month: number, id: string, patch: Partial<IncomeSource>) => void;
@@ -188,6 +201,30 @@ function normalizeCustomCategories(value: unknown): CustomCategory[] {
     }));
 }
 
+/** Every exclusion key currently reachable from the stored months. */
+function collectExclusionKeys(months: MonthData[]): Set<string> {
+  const keys = new Set<string>();
+  months.forEach((month) => {
+    month.expenses.forEach((expense) => {
+      keys.add(buildExpenseExclusionKey(expense));
+    });
+  });
+  return keys;
+}
+
+/** Keeps only exclusion keys that still match a stored transaction — stale hashes are dropped. */
+function normalizeExcludedTransactions(value: unknown, months: MonthData[]): string[] {
+  if (!Array.isArray(value)) return [];
+  const available = collectExclusionKeys(months);
+  const result = new Set<string>();
+  value.forEach((entry) => {
+    if (typeof entry === 'string' && entry.length > 0 && available.has(entry)) {
+      result.add(entry);
+    }
+  });
+  return Array.from(result);
+}
+
 function normalizeCategoryTargets(value: unknown): CategoryTargets {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -213,6 +250,7 @@ export const useExpenseStore = create<ExpenseState>()(
       customCategories: [],
       merchantMemory: {},
       categoryTargets: {},
+      excludedTransactions: [],
 
       setSelectedPeriod: (year, month) =>
         set({ selectedYear: year, selectedMonth: clampMonth(month) }),
@@ -247,10 +285,47 @@ export const useExpenseStore = create<ExpenseState>()(
               expenses: target.expenses.filter((expense) => expense.id !== id),
             }))
           );
+          const remaining = collectExclusionKeys(months);
           return {
             months,
             selectedYear: resolveSelectedYear(months, state.selectedYear),
+            excludedTransactions: state.excludedTransactions.filter((key) => remaining.has(key)),
           };
+        }),
+
+      setExpenseExcluded: (year, month, id, excluded) =>
+        set((state) => {
+          const target = state.months.find(
+            (entry) => entry.year === year && entry.month === clampMonth(month)
+          );
+          const expense = target?.expenses.find((entry) => entry.id === id);
+          if (target === undefined || expense === undefined) return state;
+
+          const key = buildExpenseExclusionKey(expense);
+          const current = new Set(state.excludedTransactions);
+          if (excluded) {
+            current.add(key);
+          } else {
+            current.delete(key);
+          }
+
+          // Pin the derived fingerprint onto manual rows so later edits — and the
+          // next export — keep pointing at the same exclusion key.
+          const needsHash = excluded && (expense.hash === undefined || expense.hash.length === 0);
+          const months = needsHash
+            ? state.months.map((entry) =>
+                entry === target
+                  ? {
+                      ...entry,
+                      expenses: entry.expenses.map((row) =>
+                        row.id === id ? { ...row, hash: key } : row
+                      ),
+                    }
+                  : entry
+              )
+            : state.months;
+
+          return { months, excludedTransactions: Array.from(current) };
         }),
 
       addIncome: (year, month, source) =>
@@ -445,15 +520,21 @@ export const useExpenseStore = create<ExpenseState>()(
           return { months: sortMonths([...merged, ...imported]) };
         }),
 
-      restoreFromBackup: (payload) =>
+      restoreFromBackup: (payload) => {
+        const months = sortMonths(pruneEmptyMonths(payload.months));
         set({
-          months: sortMonths(pruneEmptyMonths(payload.months)),
+          months,
           selectedYear: payload.selectedYear,
           selectedMonth: clampMonth(payload.selectedMonth),
           customCategories: normalizeCustomCategories(payload.customCategories),
           merchantMemory: payload.merchantMemory,
           categoryTargets: normalizeCategoryTargets(payload.categoryTargets),
-        }),
+          excludedTransactions: normalizeExcludedTransactions(
+            payload.excludedTransactions,
+            months
+          ),
+        });
+      },
 
       setMonthOutlier: (year, month, isOutlier, note) =>
         set((state) => ({
@@ -522,12 +603,13 @@ export const useExpenseStore = create<ExpenseState>()(
           customCategories: [],
           merchantMemory: {},
           categoryTargets: {},
+          excludedTransactions: [],
         }),
     }),
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      version: 6,
+      version: 7,
       migrate: (persisted) => {
         const state = (persisted ?? {}) as Record<string, unknown>;
         const rawMonths = Array.isArray(state.months) ? (state.months as MonthData[]) : [];
@@ -564,6 +646,7 @@ export const useExpenseStore = create<ExpenseState>()(
               ? state.merchantMemory
               : {},
           categoryTargets: normalizeCategoryTargets(state.categoryTargets),
+          excludedTransactions: normalizeExcludedTransactions(state.excludedTransactions, months),
         };
       },
       partialize: (state) => ({
@@ -573,6 +656,7 @@ export const useExpenseStore = create<ExpenseState>()(
         customCategories: state.customCategories,
         merchantMemory: state.merchantMemory,
         categoryTargets: state.categoryTargets,
+        excludedTransactions: state.excludedTransactions,
       }),
     }
   )

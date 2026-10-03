@@ -8,8 +8,12 @@ export const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 /** Fixed backup file name so upload updates the same file instead of duplicating. */
 export const DRIVE_BACKUP_FILE_NAME = 'budgetflow-backup.json';
 
-/** Schema version written into Drive backup JSON. */
-export const DRIVE_BACKUP_VERSION = 3 as const;
+/**
+ * Schema version written into Drive / local backup JSON.
+ * 4 added per-transaction exclusions and the full settings snapshot.
+ * Versions 1–3 are still readable — missing fields fall back to defaults.
+ */
+export const DRIVE_BACKUP_VERSION = 4 as const;
 
 export interface BuiltInCategoryMeta {
   name: BuiltInCategory;

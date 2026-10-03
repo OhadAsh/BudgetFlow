@@ -7,7 +7,10 @@ import '@mantine/notifications/styles.css';
 import './index.css';
 import App from './App';
 import { theme } from './theme';
+import { startLocalChangeTracking } from './lib/backupSnapshot';
 import { ColorSchemeSync } from './components/layout/ColorSchemeSync';
+
+startLocalChangeTracking();
 
 const container = document.getElementById('root');
 if (!container) {

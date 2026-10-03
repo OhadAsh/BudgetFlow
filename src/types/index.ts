@@ -1,3 +1,5 @@
+import type { ColorSchemeMode } from '../lib/colorScheme';
+
 export type BuiltInCategory =
   | 'דיור'
   | 'מזון'
@@ -156,6 +158,28 @@ export interface MonthlySeriesPoint {
 
 export type ViewTab = 'overview' | 'expenses' | 'annual';
 
+/** File format(s) written by the scheduled local backup. */
+export type AutoBackupFormat = 'json' | 'xlsx' | 'both';
+
+/**
+ * Every persisted user preference worth restoring on a new device.
+ * Deliberately excludes ephemeral state: Drive access tokens, loading flags,
+ * and the cached daily insight (regenerated from the data every day).
+ */
+export interface BackupSettings {
+  /** Absent (null) in a manual export when the user did not opt in to including it. */
+  openRouterApiKey: string | null;
+  googleOAuthClientId: string | null;
+  autoBackupEnabled: boolean;
+  autoBackupIntervalDays: number;
+  autoBackupFormat: AutoBackupFormat;
+  lastLocalBackupAt: string | null;
+  excludeOutliersFromStats: boolean;
+  colorSchemeMode: ColorSchemeMode;
+  hourDarkBefore: number;
+  hourDarkFrom: number;
+}
+
 /** Full app snapshot stored as JSON on Google Drive. */
 export interface DriveBackupPayload {
   version: number;
@@ -167,10 +191,17 @@ export interface DriveBackupPayload {
   merchantMemory: MerchantMemory;
   categoryTargets: CategoryTargets;
   /**
-   * OpenRouter API key from expense-settings-v1.
-   * Google OAuth Client ID is intentionally excluded — it is device/OAuth setup, not user data.
+   * OpenRouter API key, kept at the top level so backups written by version 4
+   * are still readable by the version 1–3 parser. Mirrors `settings.openRouterApiKey`.
    */
   openRouterApiKey: string | null;
+  /**
+   * Transaction fingerprints (`Expense.hash`) the user excluded from totals and charts.
+   * Absent in version 1–3 backups.
+   */
+  excludedTransactions?: string[];
+  /** Full settings snapshot — absent in version 1–3 backups. */
+  settings?: BackupSettings;
 }
 
 export interface ImportPreviewRow {

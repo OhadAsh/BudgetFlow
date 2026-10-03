@@ -4,6 +4,9 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
+  Divider,
+  FileButton,
   Group,
   Modal,
   Progress,
@@ -13,12 +16,20 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import {
   IconAlertTriangle,
   IconDatabase,
   IconDownload,
+  IconRestore,
   IconSettings,
 } from '@tabler/icons-react';
+import { applyFullBackupRestore } from '../../lib/clearUserData';
+import {
+  DriveParseError,
+  formatDriveBackupExportedAt,
+  parseDriveBackupPayload,
+} from '../../lib/googleDrive';
 import {
   AUTO_BACKUP_INTERVAL_OPTIONS,
   formatLastBackupLabel,
@@ -26,8 +37,13 @@ import {
 } from '../../lib/localBackup';
 import { formatStorageBytes } from '../../lib/localStorageQuota';
 import { COLORS } from '../../lib/constants';
+import { formatMonthYear } from '../../lib/utils';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import type { DriveBackupPayload } from '../../types';
 import { useLocalDataResilienceContext } from './LocalDataResilienceProvider';
+
+/** Upper bound for a JSON backup file picked by hand (10 MB). */
+const JSON_BACKUP_MAX_BYTES = 10 * 1024 * 1024;
 
 interface LocalDataBackupProps {
   compact?: boolean;
@@ -45,13 +61,56 @@ export function LocalDataBackupSettings(): JSX.Element {
   const autoBackupIntervalDays = useSettingsStore((state) => state.autoBackupIntervalDays);
   const autoBackupFormat = useSettingsStore((state) => state.autoBackupFormat);
   const lastLocalBackupAt = useSettingsStore((state) => state.lastLocalBackupAt);
+  const hasApiKey = useSettingsStore((state) => state.openRouterApiKey !== null);
   const setAutoBackupEnabled = useSettingsStore((state) => state.setAutoBackupEnabled);
   const setAutoBackupIntervalDays = useSettingsStore((state) => state.setAutoBackupIntervalDays);
   const setAutoBackupFormat = useSettingsStore((state) => state.setAutoBackupFormat);
 
+  const [includeApiKey, setIncludeApiKey] = useState<boolean>(false);
+  const [pendingRestore, setPendingRestore] = useState<DriveBackupPayload | null>(null);
+
   const lastLabel = formatLastBackupLabel(lastLocalBackupAt);
   const quotaColor =
     usage.level === 'critical' ? 'red' : usage.level === 'warn' ? 'yellow' : 'emerald';
+
+  const handleRestoreFile = async (file: File | null): Promise<void> => {
+    if (file === null) return;
+
+    if (file.size > JSON_BACKUP_MAX_BYTES) {
+      notifications.show({
+        color: 'red',
+        title: 'שגיאה',
+        message: 'הקובץ גדול מדי (מעל 10MB) ואינו נראה כקובץ גיבוי תקין.',
+      });
+      return;
+    }
+
+    try {
+      const raw: unknown = JSON.parse(await file.text());
+      setPendingRestore(parseDriveBackupPayload(raw));
+    } catch (error) {
+      notifications.show({
+        color: 'red',
+        title: 'שגיאה',
+        message:
+          error instanceof DriveParseError
+            ? error.message
+            : 'לא ניתן לקרוא את קובץ הגיבוי. ודא שזה קובץ JSON שנוצר על ידי האפליקציה.',
+      });
+    }
+  };
+
+  const confirmRestore = (): void => {
+    if (pendingRestore === null) return;
+    const payload = pendingRestore;
+    applyFullBackupRestore(payload);
+    setPendingRestore(null);
+    notifications.show({
+      color: 'emerald',
+      title: 'השחזור הושלם',
+      message: `הנתונים שוחזרו מגיבוי מ-${formatDriveBackupExportedAt(payload.exportedAt)} (${payload.months.length} חודשים).`,
+    });
+  };
 
   return (
     <Stack gap="md">
@@ -132,17 +191,88 @@ export function LocalDataBackupSettings(): JSX.Element {
         «גבה מקומית».
       </Text>
 
+      <Checkbox
+        checked={includeApiKey}
+        onChange={(event) => setIncludeApiKey(event.currentTarget.checked)}
+        disabled={!hasApiKey}
+        color="emerald"
+        label="כלול מפתח API בקובץ"
+        description={
+          hasApiKey
+            ? 'אזהרה: הקובץ יכיל את מפתח ה-OpenRouter שלך בטקסט גלוי. שמור אותו במקום בטוח ואל תשתף אותו.'
+            : 'אין מפתח OpenRouter שמור במכשיר הזה.'
+        }
+      />
+
       <Button
         color="blue"
         radius="xl"
         leftSection={<IconDownload size={16} />}
         onClick={() => {
-          backupNow();
+          backupNow({ includeApiKey });
         }}
         fullWidth
       >
         גבה מקומית עכשיו
       </Button>
+
+      <Divider />
+
+      <Stack gap="xs">
+        <Text fw={600} fz="sm">
+          שחזור מקובץ גיבוי
+        </Text>
+        <Text fz="xs" c="dimmed">
+          טעינת קובץ JSON שנוצר באפליקציה (מקומי או מ-Drive). כל הנתונים הנוכחיים במכשיר יוחלפו.
+        </Text>
+        <FileButton
+          accept="application/json,.json"
+          onChange={(file) => {
+            void handleRestoreFile(file);
+          }}
+        >
+          {(props) => (
+            <Button
+              {...props}
+              variant="light"
+              color="gray"
+              radius="xl"
+              leftSection={<IconRestore size={16} />}
+              fullWidth
+            >
+              שחזר מקובץ JSON
+            </Button>
+          )}
+        </FileButton>
+      </Stack>
+
+      <Modal
+        opened={pendingRestore !== null}
+        onClose={() => setPendingRestore(null)}
+        title="שחזור מקובץ גיבוי"
+        centered
+      >
+        <Stack gap="md">
+          <Text fz="sm">
+            {pendingRestore !== null
+              ? `הקובץ נוצר ב-${formatDriveBackupExportedAt(pendingRestore.exportedAt)} ומכיל ${pendingRestore.months.length} חודשים. התקופה שתיבחר: ${formatMonthYear(pendingRestore.selectedYear, pendingRestore.selectedMonth)}.`
+              : ''}
+          </Text>
+          <Text fz="sm">
+            כל הנתונים המקומיים יוחלפו (לא ימוזגו) — חודשים, קטגוריות, זיכרון עסקים, יעדים,
+            עסקאות שהוחרגו והגדרות. אם הקובץ אינו מכיל מפתח API, המפתח הנוכחי יישאר כפי שהוא.
+            הפעולה אינה ניתנת לביטול.
+          </Text>
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" radius="xl" onClick={() => setPendingRestore(null)}>
+              ביטול
+            </Button>
+            <Button color="blue" radius="xl" onClick={confirmRestore}>
+              כן, שחזר מהקובץ
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   );
 }

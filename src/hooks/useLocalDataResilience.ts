@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { notifications } from '@mantine/notifications';
+import { readBackupSnapshot } from '../lib/backupSnapshot';
 import {
   isAutoBackupDue,
   runLocalBackupDownload,
@@ -11,7 +12,7 @@ import {
   getLocalStorageUsage,
   type LocalStorageUsage,
 } from '../lib/localStorageQuota';
-import { useExpenseStore } from '../store/useExpenseStore';
+import { useGoogleDriveStore } from '../store/useGoogleDriveStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 const QUOTA_NOTIFY_ID = 'local-storage-quota';
@@ -22,20 +23,6 @@ const QUOTA_RECHECK_MS = 60_000;
 let autoBackupAttemptedThisPageLoad = false;
 let backupNudgeShownThisPageLoad = false;
 
-function readSnapshot(): LocalBackupSnapshotInput {
-  const state = useExpenseStore.getState();
-  const settings = useSettingsStore.getState();
-  return {
-    months: state.months,
-    selectedYear: state.selectedYear,
-    selectedMonth: state.selectedMonth,
-    customCategories: state.customCategories,
-    merchantMemory: state.merchantMemory,
-    categoryTargets: state.categoryTargets,
-    openRouterApiKey: settings.openRouterApiKey,
-  };
-}
-
 function hasAnythingToBackup(snapshot: LocalBackupSnapshotInput): boolean {
   return (
     snapshot.months.length > 0 ||
@@ -45,10 +32,16 @@ function hasAnythingToBackup(snapshot: LocalBackupSnapshotInput): boolean {
   );
 }
 
+export interface LocalBackupRunOptions {
+  silent?: boolean;
+  /** Writes the OpenRouter key into the downloaded file — opt-in, never automatic. */
+  includeApiKey?: boolean;
+}
+
 export interface UseLocalDataResilienceResult {
   usage: LocalStorageUsage;
   refreshUsage: () => void;
-  backupNow: (options?: { silent?: boolean }) => boolean;
+  backupNow: (options?: LocalBackupRunOptions) => boolean;
   isBackupDue: boolean;
 }
 
@@ -62,6 +55,7 @@ export function useLocalDataResilience(): UseLocalDataResilienceResult {
   const autoBackupFormat = useSettingsStore((state) => state.autoBackupFormat);
   const lastLocalBackupAt = useSettingsStore((state) => state.lastLocalBackupAt);
   const markLocalBackupDone = useSettingsStore((state) => state.markLocalBackupDone);
+  const conflictOpen = useGoogleDriveStore((state) => state.conflictOpen);
 
   const [usage, setUsage] = useState<LocalStorageUsage>(() => getLocalStorageUsage());
 
@@ -76,8 +70,8 @@ export function useLocalDataResilience(): UseLocalDataResilienceResult {
     autoBackupEnabled && isAutoBackupDue(lastLocalBackupAt, autoBackupIntervalDays);
 
   const backupNow = useCallback(
-    (options?: { silent?: boolean }): boolean => {
-      const snapshot = readSnapshot();
+    (options?: LocalBackupRunOptions): boolean => {
+      const snapshot = readBackupSnapshot({ includeApiKey: options?.includeApiKey === true });
       if (!hasAnythingToBackup(snapshot)) {
         if (!options?.silent) {
           notifications.show({
@@ -142,7 +136,12 @@ export function useLocalDataResilience(): UseLocalDataResilienceResult {
   }, [usage.level, usage.percentUsed, usage.usedBytes, usage.quotaBytes]);
 
   useEffect(() => {
-    if (!isBackupDue || !hasAnythingToBackup(readSnapshot())) {
+    if (!isBackupDue || !hasAnythingToBackup(readBackupSnapshot())) {
+      return;
+    }
+
+    // Never fire a backup behind the Drive conflict dialog.
+    if (conflictOpen) {
       return;
     }
 
@@ -183,7 +182,7 @@ export function useLocalDataResilience(): UseLocalDataResilienceResult {
         });
       }
     }, 1200);
-  }, [isBackupDue, shouldAutoDownload, lastLocalBackupAt, backupNow]);
+  }, [isBackupDue, shouldAutoDownload, lastLocalBackupAt, conflictOpen, backupNow]);
 
   return {
     usage,

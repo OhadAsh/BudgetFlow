@@ -11,6 +11,7 @@ import type {
   OutOfFlowProject,
 } from '../types';
 import { CATEGORIES } from './constants';
+import { buildExpenseExclusionKey } from './transactionIdentity';
 import type { CategoryKindMap } from './utils';
 import {
   DEFAULT_CATEGORY_KINDS,
@@ -19,6 +20,26 @@ import {
   getShortMonthName,
   resolveCategoryMeta,
 } from './utils';
+
+/** Nothing excluded — the default for every aggregation helper. */
+export const NO_EXCLUDED_TRANSACTIONS: ReadonlySet<string> = new Set<string>();
+
+/** Drops the transactions the user excluded by hand, keyed by transaction fingerprint. */
+export function withoutExcludedTransactions(
+  expenses: Expense[],
+  excluded: ReadonlySet<string> = NO_EXCLUDED_TRANSACTIONS
+): Expense[] {
+  if (excluded.size === 0) return expenses;
+  return expenses.filter((expense) => !excluded.has(buildExpenseExclusionKey(expense)));
+}
+
+/** True when this row was individually excluded from every statistic. */
+export function isExpenseExcluded(
+  expense: Expense,
+  excluded: ReadonlySet<string> = NO_EXCLUDED_TRANSACTIONS
+): boolean {
+  return excluded.size > 0 && excluded.has(buildExpenseExclusionKey(expense));
+}
 
 /** Options for year-level aggregations and chart series. */
 export interface AggregationOptions {
@@ -33,6 +54,8 @@ export interface AggregationOptions {
    * Omitted means built-in kinds only (savings excluded, no out-of-flow categories).
    */
   kinds?: CategoryKindMap;
+  /** Transaction fingerprints the user excluded one by one. */
+  excluded?: ReadonlySet<string>;
 }
 
 export function emptyCategoryRecord(): Record<CategoryType, number> {
@@ -122,10 +145,12 @@ export function createEmptyMonth(year: number, month: number): MonthData {
 
 export function getMonthStats(
   month: MonthData | undefined,
-  kinds: CategoryKindMap = DEFAULT_CATEGORY_KINDS
+  kinds: CategoryKindMap = DEFAULT_CATEGORY_KINDS,
+  excluded: ReadonlySet<string> = NO_EXCLUDED_TRANSACTIONS
 ): MonthStats {
   const income = month?.income ?? [];
-  const expenses = month?.expenses ?? [];
+  const allExpenses = month?.expenses ?? [];
+  const expenses = withoutExcludedTransactions(allExpenses, excluded);
   const totalIncome = sumIncome(income);
   const totalExpenses = sumExpenses(expenses, kinds);
   const totalSavingsCategory = sumSavingsCategory(expenses, kinds);
@@ -158,16 +183,19 @@ export function getMonthStats(
         !kinds.savings.has(category) &&
         !kinds.outOfFlow.has(category)
     ).length,
-    hasData: income.length > 0 || expenses.length > 0,
+    // A month that holds only excluded rows is still a month with records.
+    hasData: income.length > 0 || allExpenses.length > 0,
   };
 }
 
 /** Category breakdown for the pie chart — spending categories only, largest first. */
 export function getCategoryBreakdown(
-  expenses: Expense[],
-  customCategories: CustomCategory[] = []
+  allExpenses: Expense[],
+  customCategories: CustomCategory[] = [],
+  excluded: ReadonlySet<string> = NO_EXCLUDED_TRANSACTIONS
 ): CategoryBreakdownItem[] {
   const kinds = buildCategoryKindMap(customCategories);
+  const expenses = withoutExcludedTransactions(allExpenses, excluded);
   const totals = groupByCategory(expenses);
   const spendingTotal = sumExpenses(expenses, kinds);
 
@@ -201,21 +229,22 @@ export function getMonthlySeries(
 ): MonthlySeriesPoint[] {
   const excludeOutliers = options.excludeOutliers === true;
   const kinds = options.kinds ?? DEFAULT_CATEGORY_KINDS;
+  const excluded = options.excluded ?? NO_EXCLUDED_TRANSACTIONS;
 
   return Array.from({ length: 12 }, (_, index) => {
     const monthNumber = index + 1;
     const monthData = findMonth(months, year, monthNumber);
-    const stats = getMonthStats(monthData, kinds);
+    const stats = getMonthStats(monthData, kinds, excluded);
     const outlier = isMonthOutlier(monthData);
-    const excluded = excludeOutliers && outlier;
+    const skipMonth = excludeOutliers && outlier;
 
     return {
       month: monthNumber,
       label: getShortMonthName(monthNumber),
-      income: excluded ? 0 : stats.totalIncome,
-      expenses: excluded ? 0 : stats.totalExpenses,
-      saved: excluded || !stats.hasData ? 0 : stats.netSaved,
-      hasData: excluded ? false : stats.hasData,
+      income: skipMonth ? 0 : stats.totalIncome,
+      expenses: skipMonth ? 0 : stats.totalExpenses,
+      saved: skipMonth || !stats.hasData ? 0 : stats.netSaved,
+      hasData: skipMonth ? false : stats.hasData,
       isOutlier: outlier,
     };
   });
@@ -235,6 +264,7 @@ export function getAnnualStats(
 
   const excludeOutliers = options.excludeOutliers === true;
   const kinds = options.kinds ?? DEFAULT_CATEGORY_KINDS;
+  const excluded = options.excluded ?? NO_EXCLUDED_TRANSACTIONS;
   const byCategory = emptyCategoryRecord();
   const outOfFlowByCategory: Record<CategoryType, number> = {};
   let totalOutOfFlow = 0;
@@ -242,7 +272,7 @@ export function getAnnualStats(
     .filter((month) => month.year === year)
     .filter((month) => !(excludeOutliers && isMonthOutlier(month)))
     .forEach((month) => {
-      month.expenses.forEach((expense) => {
+      withoutExcludedTransactions(month.expenses, excluded).forEach((expense) => {
         const key = expense.category.trim().length > 0 ? expense.category : 'אחר';
         byCategory[key] = (byCategory[key] ?? 0) + safeNumber(expense.amount);
         if (kinds.outOfFlow.has(expense.category)) {
@@ -285,7 +315,8 @@ export function getAnnualStats(
 export function getOutOfFlowProjects(
   months: MonthData[],
   customCategories: CustomCategory[],
-  year: number
+  year: number,
+  excluded: ReadonlySet<string> = NO_EXCLUDED_TRANSACTIONS
 ): OutOfFlowProject[] {
   const kinds = buildCategoryKindMap(customCategories);
   if (kinds.outOfFlow.size === 0) return [];
@@ -293,7 +324,7 @@ export function getOutOfFlowProjects(
   const totals = new Map<string, ProjectAccumulator>();
 
   months.forEach((month) => {
-    month.expenses.forEach((expense) => {
+    withoutExcludedTransactions(month.expenses, excluded).forEach((expense) => {
       if (!kinds.outOfFlow.has(expense.category)) return;
 
       const amount = safeNumber(expense.amount);
@@ -378,7 +409,10 @@ export interface CategoryGroup {
   expenses: Expense[];
 }
 
-export function groupExpensesByCategory(expenses: Expense[]): CategoryGroup[] {
+export function groupExpensesByCategory(
+  expenses: Expense[],
+  excluded: ReadonlySet<string> = NO_EXCLUDED_TRANSACTIONS
+): CategoryGroup[] {
   const groups = new Map<CategoryType, Expense[]>();
   expenses.forEach((expense) => {
     const existing = groups.get(expense.category);
@@ -392,7 +426,11 @@ export function groupExpensesByCategory(expenses: Expense[]): CategoryGroup[] {
   return Array.from(groups.entries())
     .map(([category, items]) => ({
       category,
-      total: items.reduce((total, item) => total + safeNumber(item.amount), 0),
+      // Excluded rows stay visible in the group but never in its total.
+      total: withoutExcludedTransactions(items, excluded).reduce(
+        (total, item) => total + safeNumber(item.amount),
+        0
+      ),
       expenses: sortExpenses(items),
     }))
     .sort((a, b) => b.total - a.total);

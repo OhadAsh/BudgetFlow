@@ -19,17 +19,21 @@ import {
   IconSettings,
 } from '@tabler/icons-react';
 import { useGoogleDrive } from '../../hooks/useGoogleDrive';
-import { applyFullBackupRestore } from '../../lib/clearUserData';
 import {
   DriveApiDisabledError,
   DriveNetworkError,
   DriveNotFoundError,
   DriveParseError,
   formatDriveBackupExportedAt,
+  type DriveBackupDownload,
 } from '../../lib/googleDrive';
+import { buildLocalJsonBackupFileName, downloadJsonBackup } from '../../lib/localBackup';
 import { formatMonthYear } from '../../lib/utils';
-import type { DriveBackupPayload } from '../../types';
+import { useGoogleDriveStore } from '../../store/useGoogleDriveStore';
+import { DriveConflictModal } from './DriveConflictModal';
 import { GoogleClientIdModal } from './GoogleClientIdModal';
+
+const REMOTE_NEWER_NOTIFY_ID = 'drive-remote-newer';
 
 interface GoogleDriveBackupProps {
   compact?: boolean;
@@ -70,12 +74,99 @@ export function GoogleDriveBackup({
     signOut,
     backupNow,
     fetchBackup,
+    applyRestore,
+    checkRemoteState,
   } = useGoogleDrive();
 
-  const [pendingRestore, setPendingRestore] = useState<DriveBackupPayload | null>(null);
+  const conflictOpen = useGoogleDriveStore((state) => state.conflictOpen);
+  const setConflictOpen = useGoogleDriveStore((state) => state.setConflictOpen);
+
+  const [pendingRestore, setPendingRestore] = useState<DriveBackupDownload | null>(null);
+  const [conflictModifiedTime, setConflictModifiedTime] = useState<string | null>(null);
   const [clientIdOpened, setClientIdOpened] = useState<boolean>(false);
   const [connectAfterSave, setConnectAfterSave] = useState<boolean>(false);
   const size = compact ? 'xs' : 'sm';
+
+  const openConflict = (remoteModifiedTime: string | null): void => {
+    notifications.hide(REMOTE_NEWER_NOTIFY_ID);
+    setConflictModifiedTime(remoteModifiedTime);
+    setConflictOpen(true);
+  };
+
+  const closeConflict = (): void => {
+    setConflictOpen(false);
+    setConflictModifiedTime(null);
+  };
+
+  /** Loads the Drive copy over the local state and records the sync. */
+  const loadRemoteIntoApp = async (): Promise<void> => {
+    const download = await fetchBackup();
+    applyRestore(download);
+    notifications.show({
+      color: 'emerald',
+      title: 'נטען מ-Drive',
+      message: `הנתונים המקומיים הוחלפו בגיבוי מ-${formatDriveBackupExportedAt(download.payload.exportedAt)}.`,
+    });
+  };
+
+  /**
+   * Right after connecting: compare with Drive before anything can upload.
+   * Remote-only changes get a dismissible offer; two-sided changes get the modal.
+   */
+  const runPostConnectCheck = async (): Promise<void> => {
+    try {
+      const remote = await checkRemoteState();
+      if (!remote.hasRemote || !remote.remoteIsNewer) {
+        return;
+      }
+
+      if (remote.hasLocalChanges) {
+        openConflict(remote.remoteModifiedTime);
+        return;
+      }
+
+      notifications.show({
+        id: REMOTE_NEWER_NOTIFY_ID,
+        color: 'blue',
+        title: 'יש ב-Drive גיבוי חדש יותר',
+        autoClose: false,
+        withCloseButton: true,
+        message: (
+          <Stack gap="xs" align="flex-start">
+            <Text fz="sm">
+              {remote.remoteModifiedTime !== null
+                ? `הגיבוי ב-Drive עודכן ב-${formatDriveBackupExportedAt(remote.remoteModifiedTime)} ואין שינויים מקומיים שלא גובו.`
+                : 'הגיבוי ב-Drive עודכן ואין שינויים מקומיים שלא גובו.'}
+            </Text>
+            <Button
+              size="xs"
+              radius="xl"
+              color="blue"
+              leftSection={<IconCloudDownload size={14} />}
+              onClick={() => {
+                notifications.hide(REMOTE_NEWER_NOTIFY_ID);
+                void loadRemoteIntoApp().catch((error: unknown) => {
+                  notifications.show({
+                    color: 'red',
+                    title: 'שגיאה בשחזור',
+                    message: errorMessage(error),
+                  });
+                });
+              }}
+            >
+              טען מ-Drive
+            </Button>
+          </Stack>
+        ),
+      });
+    } catch (error) {
+      notifications.show({
+        color: 'yellow',
+        title: 'לא ניתן לבדוק את מצב הגיבוי ב-Drive',
+        message: errorMessage(error),
+      });
+    }
+  };
 
   const runSignIn = async (): Promise<void> => {
     try {
@@ -85,6 +176,7 @@ export function GoogleDriveBackup({
         title: 'מחובר ל-Google Drive',
         message: 'אפשר לגבות ולשחזר את הנתונים בענן.',
       });
+      await runPostConnectCheck();
     } catch (error) {
       if (error instanceof Error && error.message === 'MISSING_CLIENT_ID') {
         setConnectAfterSave(true);
@@ -135,9 +227,20 @@ export function GoogleDriveBackup({
     }
   };
 
-  const handleBackup = async (): Promise<void> => {
+  const handleBackup = async (force = false): Promise<void> => {
     try {
-      await backupNow();
+      const outcome = await backupNow(force ? { force: true } : undefined);
+
+      if (outcome.status === 'blocked') {
+        return;
+      }
+
+      if (outcome.status === 'conflict') {
+        openConflict(outcome.remoteModifiedTime);
+        return;
+      }
+
+      closeConflict();
       notifications.show({
         color: 'emerald',
         title: 'הגיבוי הושלם',
@@ -154,8 +257,8 @@ export function GoogleDriveBackup({
 
   const handleRestoreClick = async (): Promise<void> => {
     try {
-      const payload = await fetchBackup();
-      setPendingRestore(payload);
+      const download = await fetchBackup();
+      setPendingRestore(download);
     } catch (error) {
       notifications.show({
         color: 'red',
@@ -169,9 +272,10 @@ export function GoogleDriveBackup({
     if (pendingRestore === null) {
       return;
     }
-    const payload = pendingRestore;
-    applyFullBackupRestore(payload);
+    const download = pendingRestore;
+    applyRestore(download);
     setPendingRestore(null);
+    const payload = download.payload;
     const periodLabel = formatMonthYear(payload.selectedYear, payload.selectedMonth);
     const backupDate = formatDriveBackupExportedAt(payload.exportedAt);
     notifications.show({
@@ -179,6 +283,38 @@ export function GoogleDriveBackup({
       title: 'השחזור הושלם',
       message: `כל הנתונים המקומיים הוחלפו בגיבוי מ-${backupDate} (${payload.months.length} חודשים). התקופה הנבחרת: ${periodLabel}.`,
     });
+  };
+
+  const handleConflictLoadRemote = async (): Promise<void> => {
+    try {
+      await loadRemoteIntoApp();
+      closeConflict();
+    } catch (error) {
+      notifications.show({
+        color: 'red',
+        title: 'שגיאה בשחזור',
+        message: errorMessage(error),
+      });
+    }
+  };
+
+  const handleConflictDownloadCopy = async (): Promise<void> => {
+    try {
+      const download = await fetchBackup();
+      downloadJsonBackup(download.payload, buildLocalJsonBackupFileName());
+      closeConflict();
+      notifications.show({
+        color: 'emerald',
+        title: 'עותק של Drive הורד',
+        message: 'הקובץ נשמר בתיקיית ההורדות. לא בוצע שינוי בנתונים המקומיים ולא ב-Drive.',
+      });
+    } catch (error) {
+      notifications.show({
+        color: 'red',
+        title: 'שגיאה בהורדת הגיבוי',
+        message: errorMessage(error),
+      });
+    }
   };
 
   const closeRestoreConfirm = (): void => {
@@ -296,7 +432,9 @@ export function GoogleDriveBackup({
   );
 
   const backupDateLabel =
-    pendingRestore !== null ? formatDriveBackupExportedAt(pendingRestore.exportedAt) : '';
+    pendingRestore !== null
+      ? formatDriveBackupExportedAt(pendingRestore.payload.exportedAt)
+      : '';
 
   return (
     <>
@@ -341,6 +479,22 @@ export function GoogleDriveBackup({
           </Group>
         </Stack>
       </Modal>
+
+      <DriveConflictModal
+        opened={conflictOpen}
+        remoteModifiedTime={conflictModifiedTime}
+        busy={isBusy}
+        onClose={closeConflict}
+        onLoadRemote={() => {
+          void handleConflictLoadRemote();
+        }}
+        onOverwriteRemote={() => {
+          void handleBackup(true);
+        }}
+        onDownloadRemoteCopy={() => {
+          void handleConflictDownloadCopy();
+        }}
+      />
 
       <GoogleClientIdModal
         opened={clientIdOpened}

@@ -1,19 +1,40 @@
 import { useCallback, useEffect, useState } from 'react';
 import { GOOGLE_DRIVE_SCOPE } from '../lib/constants';
+import { readBackupSnapshot } from '../lib/backupSnapshot';
+import { applyFullBackupRestore } from '../lib/clearUserData';
 import {
   DriveAuthError,
   buildDriveBackupPayload,
   downloadBackupFromDrive,
+  findBackupFile,
+  isRemoteNewer,
   isValidGoogleOAuthClientId,
   uploadBackupToDrive,
+  type DriveBackupDownload,
 } from '../lib/googleDrive';
-import type { DriveBackupPayload } from '../types';
-import { useExpenseStore } from '../store/useExpenseStore';
 import { useGoogleDriveStore } from '../store/useGoogleDriveStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 const GIS_WAIT_MS = 15_000;
 const TOKEN_SKEW_MS = 60_000;
+
+/** Result of an upload attempt — an upload never silently wins over a newer Drive copy. */
+export type DriveBackupOutcome =
+  | { status: 'uploaded'; remoteModifiedTime: string | null }
+  /** Drive changed since the last sync; the caller must ask the user what to do. */
+  | { status: 'conflict'; remoteModifiedTime: string | null }
+  /** The conflict dialog is already open — automatic backups must stand down. */
+  | { status: 'blocked' };
+
+/** How the local copy compares to the file currently on Drive. */
+export interface DriveRemoteState {
+  hasRemote: boolean;
+  remoteModifiedTime: string | null;
+  /** Drive was written after the stamp from our last sync. */
+  remoteIsNewer: boolean;
+  /** Local data changed since that sync. */
+  hasLocalChanges: boolean;
+}
 
 export interface UseGoogleDriveResult {
   /** GIS script finished loading. */
@@ -33,10 +54,17 @@ export interface UseGoogleDriveResult {
   /** Re-requests an access token (used after 401). Pass selectAccount to show the account picker. */
   requestAccessToken: (options?: { selectAccount?: boolean }) => Promise<string>;
 
-  /** Builds a snapshot from the store and uploads/updates it on Drive. */
-  backupNow: () => Promise<void>;
+  /**
+   * Builds a snapshot from the store and uploads it — unless Drive holds a
+   * newer copy, in which case it reports a conflict instead of overwriting.
+   */
+  backupNow: (options?: { force?: boolean }) => Promise<DriveBackupOutcome>;
   /** Downloads the Drive backup JSON (does not write to the store). */
-  fetchBackup: () => Promise<DriveBackupPayload>;
+  fetchBackup: () => Promise<DriveBackupDownload>;
+  /** Overwrites local state with a downloaded backup and records the sync. */
+  applyRestore: (download: DriveBackupDownload) => void;
+  /** Metadata-only comparison of the local copy against Drive. */
+  checkRemoteState: () => Promise<DriveRemoteState>;
   /** Uploads/downloads busy flag for UI spinners. */
   isBusy: boolean;
 }
@@ -130,14 +158,6 @@ export function useGoogleDrive(): UseGoogleDriveResult {
   const clearSession = useGoogleDriveStore((state) => state.clearSession);
 
   const googleOAuthClientId = useSettingsStore((state) => state.googleOAuthClientId);
-  const openRouterApiKey = useSettingsStore((state) => state.openRouterApiKey);
-
-  const months = useExpenseStore((state) => state.months);
-  const selectedYear = useExpenseStore((state) => state.selectedYear);
-  const selectedMonth = useExpenseStore((state) => state.selectedMonth);
-  const customCategories = useExpenseStore((state) => state.customCategories);
-  const merchantMemory = useExpenseStore((state) => state.merchantMemory);
-  const categoryTargets = useExpenseStore((state) => state.categoryTargets);
 
   const hasClientId =
     googleOAuthClientId !== null && isValidGoogleOAuthClientId(googleOAuthClientId);
@@ -266,34 +286,51 @@ export function useGoogleDrive(): UseGoogleDriveResult {
     [requestAccessToken]
   );
 
-  const backupNow = useCallback(async (): Promise<void> => {
-    setIsBusy(true);
-    try {
-      const payload = buildDriveBackupPayload({
-        months,
-        selectedYear,
-        selectedMonth,
-        customCategories,
-        merchantMemory,
-        categoryTargets,
-        openRouterApiKey,
-      });
-      await withFreshToken((token) => uploadBackupToDrive(token, payload));
-    } finally {
-      setIsBusy(false);
-    }
-  }, [
-    months,
-    selectedYear,
-    selectedMonth,
-    customCategories,
-    merchantMemory,
-    categoryTargets,
-    openRouterApiKey,
-    withFreshToken,
-  ]);
+  const checkRemoteState = useCallback(async (): Promise<DriveRemoteState> => {
+    const file = await withFreshToken((token) => findBackupFile(token));
+    const settings = useSettingsStore.getState();
+    return {
+      hasRemote: file !== null,
+      remoteModifiedTime: file?.modifiedTime ?? null,
+      remoteIsNewer:
+        file !== null &&
+        isRemoteNewer(file.modifiedTime, settings.lastSyncedRemoteModifiedTime),
+      hasLocalChanges: settings.localDirtyAt !== null,
+    };
+  }, [withFreshToken]);
 
-  const fetchBackup = useCallback(async (): Promise<DriveBackupPayload> => {
+  const backupNow = useCallback(
+    async (options?: { force?: boolean }): Promise<DriveBackupOutcome> => {
+      // Automatic/ordinary uploads stand down while the dialog is open; the
+      // "overwrite Drive" button inside it is the one caller that may force through.
+      if (options?.force !== true && useGoogleDriveStore.getState().conflictOpen) {
+        return { status: 'blocked' };
+      }
+
+      setIsBusy(true);
+      try {
+        if (options?.force !== true) {
+          // Metadata only — cheap enough to run before every single upload.
+          const remote = await checkRemoteState();
+          if (remote.hasRemote && remote.remoteIsNewer) {
+            return { status: 'conflict', remoteModifiedTime: remote.remoteModifiedTime };
+          }
+        }
+
+        const snapshot = readBackupSnapshot({ includeApiKey: true });
+        const payload = buildDriveBackupPayload(snapshot);
+        const file = await withFreshToken((token) => uploadBackupToDrive(token, payload));
+        const remoteModifiedTime = file.modifiedTime ?? null;
+        useSettingsStore.getState().markDriveSynced(remoteModifiedTime);
+        return { status: 'uploaded', remoteModifiedTime };
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [checkRemoteState, withFreshToken]
+  );
+
+  const fetchBackup = useCallback(async (): Promise<DriveBackupDownload> => {
     setIsBusy(true);
     try {
       return await withFreshToken((token) => downloadBackupFromDrive(token));
@@ -301,6 +338,12 @@ export function useGoogleDrive(): UseGoogleDriveResult {
       setIsBusy(false);
     }
   }, [withFreshToken]);
+
+  const applyRestore = useCallback((download: DriveBackupDownload): void => {
+    applyFullBackupRestore(download.payload);
+    // Runs after the restore so the writes it triggered do not count as local changes.
+    useSettingsStore.getState().markDriveSynced(download.modifiedTime);
+  }, []);
 
   return {
     isReady,
@@ -313,6 +356,8 @@ export function useGoogleDrive(): UseGoogleDriveResult {
     requestAccessToken,
     backupNow,
     fetchBackup,
+    applyRestore,
+    checkRemoteState,
     isBusy,
   };
 }

@@ -17,7 +17,7 @@ import {
 import { useMediaQuery } from '@mantine/hooks';
 import { IconLayoutList, IconListDetails, IconPlus, IconSearch } from '@tabler/icons-react';
 import { COLORS, SECTION_TITLE_STYLE } from '../../lib/constants';
-import { groupExpensesByCategory } from '../../lib/calculations';
+import { groupExpensesByCategory, isExpenseExcluded } from '../../lib/calculations';
 import {
   formatCurrency,
   matchesSearchQuery,
@@ -139,7 +139,7 @@ export function ExpenseTable(): JSX.Element {
   const isDesktop = useMediaQuery('(min-width: 62em)', undefined, {
     getInitialValueInEffect: false,
   });
-  const { year, month, monthData, stats } = useMonthData();
+  const { year, month, monthData, stats, excludedTransactions } = useMonthData();
   const addExpense = useExpenseStore((state) => state.addExpense);
   const customCategories = useExpenseStore((state) => state.customCategories);
   const [grouped, setGrouped] = useState<boolean>(false);
@@ -162,12 +162,12 @@ export function ExpenseTable(): JSX.Element {
   );
 
   const groups = useMemo(() => {
-    const baseGroups = groupExpensesByCategory(filteredExpenses);
+    const baseGroups = groupExpensesByCategory(filteredExpenses, excludedTransactions);
     return baseGroups.map((group) => ({
       ...group,
       expenses: sortExpensesForDisplay(group.expenses, sortColumn, sortDirection),
     }));
-  }, [filteredExpenses, sortColumn, sortDirection]);
+  }, [filteredExpenses, excludedTransactions, sortColumn, sortDirection]);
 
   const handleSort = (column: ExpenseSortColumn): void => {
     if (column === sortColumn) {
@@ -286,7 +286,7 @@ export function ExpenseTable(): JSX.Element {
                     width={110}
                     onSort={handleSort}
                   />
-                  <StaticHeader width={44} />
+                  <StaticHeader width={80} />
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -337,12 +337,19 @@ export function ExpenseTable(): JSX.Element {
                           expense={expense}
                           year={year}
                           month={month}
+                          excluded={isExpenseExcluded(expense, excludedTransactions)}
                         />
                       ))}
                     </Fragment>
                   ))
                   : sorted.map((expense) => (
-                    <ExpenseRow key={expense.id} expense={expense} year={year} month={month} />
+                    <ExpenseRow
+                      key={expense.id}
+                      expense={expense}
+                      year={year}
+                      month={month}
+                      excluded={isExpenseExcluded(expense, excludedTransactions)}
+                    />
                   ))}
               </Table.Tbody>
             </Table>

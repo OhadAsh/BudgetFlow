@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { AutoBackupFormat } from '../lib/localBackup';
+import type { AutoBackupFormat, BackupSettings } from '../types';
 import { DEFAULT_AUTO_BACKUP_INTERVAL_DAYS } from '../lib/localBackup';
 import {
   HOUR_DARK_BEFORE,
@@ -33,6 +33,10 @@ interface SettingsState {
   hourDarkBefore: number;
   /** Hour mode: dark from this local hour inclusive (0–23). */
   hourDarkFrom: number;
+  /** Drive `modifiedTime` of the backup file as of the last successful upload/download. */
+  lastSyncedRemoteModifiedTime: string | null;
+  /** ISO timestamp of the first local change made after that sync — null when in sync. */
+  localDirtyAt: string | null;
   setOpenRouterApiKey: (key: string | null) => void;
   setGoogleOAuthClientId: (clientId: string | null) => void;
   setAutoBackupEnabled: (enabled: boolean) => void;
@@ -43,6 +47,12 @@ interface SettingsState {
   setColorSchemeMode: (mode: ColorSchemeMode) => void;
   setHourDarkBefore: (hour: number) => void;
   setHourDarkFrom: (hour: number) => void;
+  /** Records a finished Drive sync: remote stamp stored, local dirty marker cleared. */
+  markDriveSynced: (remoteModifiedTime: string | null) => void;
+  /** Flags that local data changed since the last Drive sync (first change wins). */
+  markLocalDirty: () => void;
+  /** Applies a settings snapshot from a backup; absent fields keep their current value. */
+  restoreSettingsFromBackup: (settings: Partial<BackupSettings> | undefined) => void;
   clearSettings: () => void;
 }
 
@@ -65,6 +75,26 @@ function normalizeFormat(value: unknown): AutoBackupFormat {
   return 'json';
 }
 
+/**
+ * Snapshot of every persisted preference for a backup file.
+ * The OpenRouter key is opt-in so a manual export never leaks a secret by default.
+ */
+export function readBackupSettings(includeApiKey: boolean): BackupSettings {
+  const state = useSettingsStore.getState();
+  return {
+    openRouterApiKey: includeApiKey ? state.openRouterApiKey : null,
+    googleOAuthClientId: state.googleOAuthClientId,
+    autoBackupEnabled: state.autoBackupEnabled,
+    autoBackupIntervalDays: state.autoBackupIntervalDays,
+    autoBackupFormat: state.autoBackupFormat,
+    lastLocalBackupAt: state.lastLocalBackupAt,
+    excludeOutliersFromStats: state.excludeOutliersFromStats,
+    colorSchemeMode: state.colorSchemeMode,
+    hourDarkBefore: state.hourDarkBefore,
+    hourDarkFrom: state.hourDarkFrom,
+  };
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
@@ -78,6 +108,8 @@ export const useSettingsStore = create<SettingsState>()(
       colorSchemeMode: 'system',
       hourDarkBefore: HOUR_DARK_BEFORE,
       hourDarkFrom: HOUR_DARK_FROM,
+      lastSyncedRemoteModifiedTime: null,
+      localDirtyAt: null,
       setOpenRouterApiKey: (key) => set({ openRouterApiKey: key }),
       setGoogleOAuthClientId: (clientId) => set({ googleOAuthClientId: clientId }),
       setAutoBackupEnabled: (enabled) => set({ autoBackupEnabled: enabled }),
@@ -91,6 +123,66 @@ export const useSettingsStore = create<SettingsState>()(
       setHourDarkBefore: (hour) =>
         set({ hourDarkBefore: normalizeHourValue(hour, HOUR_DARK_BEFORE) }),
       setHourDarkFrom: (hour) => set({ hourDarkFrom: normalizeHourValue(hour, HOUR_DARK_FROM) }),
+      markDriveSynced: (remoteModifiedTime) =>
+        set({
+          lastSyncedRemoteModifiedTime:
+            typeof remoteModifiedTime === 'string' && remoteModifiedTime.length > 0
+              ? remoteModifiedTime
+              : null,
+          localDirtyAt: null,
+        }),
+      markLocalDirty: () =>
+        set((state) =>
+          state.localDirtyAt === null ? { localDirtyAt: new Date().toISOString() } : state
+        ),
+      restoreSettingsFromBackup: (settings) => {
+        if (settings === undefined || settings === null) return;
+        set((state) => ({
+          // An absent key means "the export did not carry one" — never wipe the local key.
+          openRouterApiKey:
+            typeof settings.openRouterApiKey === 'string' &&
+            settings.openRouterApiKey.trim().length > 0
+              ? settings.openRouterApiKey
+              : state.openRouterApiKey,
+          googleOAuthClientId:
+            typeof settings.googleOAuthClientId === 'string' &&
+            settings.googleOAuthClientId.trim().length > 0
+              ? settings.googleOAuthClientId
+              : state.googleOAuthClientId,
+          autoBackupEnabled:
+            typeof settings.autoBackupEnabled === 'boolean'
+              ? settings.autoBackupEnabled
+              : state.autoBackupEnabled,
+          autoBackupIntervalDays:
+            settings.autoBackupIntervalDays === undefined
+              ? state.autoBackupIntervalDays
+              : normalizeIntervalDays(settings.autoBackupIntervalDays),
+          autoBackupFormat:
+            settings.autoBackupFormat === undefined
+              ? state.autoBackupFormat
+              : normalizeFormat(settings.autoBackupFormat),
+          lastLocalBackupAt:
+            typeof settings.lastLocalBackupAt === 'string'
+              ? settings.lastLocalBackupAt
+              : state.lastLocalBackupAt,
+          excludeOutliersFromStats:
+            typeof settings.excludeOutliersFromStats === 'boolean'
+              ? settings.excludeOutliersFromStats
+              : state.excludeOutliersFromStats,
+          colorSchemeMode:
+            settings.colorSchemeMode === undefined
+              ? state.colorSchemeMode
+              : normalizeColorSchemeMode(settings.colorSchemeMode),
+          hourDarkBefore:
+            settings.hourDarkBefore === undefined
+              ? state.hourDarkBefore
+              : normalizeHourValue(settings.hourDarkBefore, HOUR_DARK_BEFORE),
+          hourDarkFrom:
+            settings.hourDarkFrom === undefined
+              ? state.hourDarkFrom
+              : normalizeHourValue(settings.hourDarkFrom, HOUR_DARK_FROM),
+        }));
+      },
       clearSettings: () =>
         set({
           openRouterApiKey: null,
@@ -103,12 +195,14 @@ export const useSettingsStore = create<SettingsState>()(
           colorSchemeMode: 'system',
           hourDarkBefore: HOUR_DARK_BEFORE,
           hourDarkFrom: HOUR_DARK_FROM,
+          lastSyncedRemoteModifiedTime: null,
+          localDirtyAt: null,
         }),
     }),
     {
       name: SETTINGS_STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      version: 6,
+      version: 7,
       migrate: (persisted) => {
         const state = (persisted ?? {}) as Record<string, unknown>;
         return {
@@ -129,6 +223,11 @@ export const useSettingsStore = create<SettingsState>()(
           colorSchemeMode: normalizeColorSchemeMode(state.colorSchemeMode),
           hourDarkBefore: normalizeHourValue(state.hourDarkBefore, HOUR_DARK_BEFORE),
           hourDarkFrom: normalizeHourValue(state.hourDarkFrom, HOUR_DARK_FROM),
+          lastSyncedRemoteModifiedTime:
+            typeof state.lastSyncedRemoteModifiedTime === 'string'
+              ? state.lastSyncedRemoteModifiedTime
+              : null,
+          localDirtyAt: typeof state.localDirtyAt === 'string' ? state.localDirtyAt : null,
         };
       },
       partialize: (state) => ({
@@ -142,6 +241,8 @@ export const useSettingsStore = create<SettingsState>()(
         colorSchemeMode: state.colorSchemeMode,
         hourDarkBefore: state.hourDarkBefore,
         hourDarkFrom: state.hourDarkFrom,
+        lastSyncedRemoteModifiedTime: state.lastSyncedRemoteModifiedTime,
+        localDirtyAt: state.localDirtyAt,
       }),
     }
   )
